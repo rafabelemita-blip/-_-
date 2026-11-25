@@ -1,0 +1,601 @@
+local Players = game:GetService("Players")
+local Run = game:GetService("RunService")
+local Input = game:GetService("UserInputService")
+local Tween = game:GetService("TweenService")
+local Tags = game:GetService("CollectionService")
+
+local Player = Players.LocalPlayer
+local PG = Player:WaitForChild("PlayerGui")
+
+local Config = {
+    Radius = 250,
+    NPCH = 20,
+    AlphaH = 30,
+    BossH = 50,
+    NPC = false,
+    Boss = false,
+    Gems = false,
+    Sword = false,
+    AttackInterval = 0.25
+}
+
+local Old = PG:FindFirstChild("NeuralV4")
+if Old then Old:Destroy() end
+
+local Connections = {}
+local Results = {}
+local Target = nil
+local Running = true
+
+local Red = Color3.fromRGB(255,35,63)
+local Black = Color3.fromRGB(9,9,13)
+local Dark = Color3.fromRGB(23,23,30)
+local White = Color3.fromRGB(235,235,240)
+
+local function Connect(signal, fn)
+    local c = signal:Connect(fn)
+    table.insert(Connections,c)
+    return c
+end
+
+local function New(class,parent,properties)
+    local object = Instance.new(class)
+
+    for key,value in pairs(properties or {}) do
+        object[key] = value
+    end
+
+    object.Parent = parent
+    return object
+end
+
+local function Corner(object,radius)
+    New("UICorner",object,{
+        CornerRadius = UDim.new(0,radius)
+    })
+end
+
+local function Root()
+    local c = Player.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function Part(object)
+    if not object then return nil end
+
+    if object:IsA("BasePart") then
+        return object
+    end
+
+    if object:IsA("Model") then
+        return object:FindFirstChild("HumanoidRootPart")
+            or object.PrimaryPart
+            or object:FindFirstChildWhichIsA("BasePart",true)
+    end
+end
+
+local function Contains(text,word)
+    return string.find(text,word,1,true) ~= nil
+end
+
+local function IsValid(entry)
+    if not entry or not entry.Object then
+        return false
+    end
+
+    if not entry.Object:IsDescendantOf(workspace) then
+        return false
+    end
+
+    local h = entry.Object:FindFirstChildOfClass("Humanoid")
+
+    if h and h.Health <= 0 then
+        return false
+    end
+
+    return Part(entry.Object) ~= nil
+end
+
+local function Classify(object)
+    local name = object.Name:lower()
+
+    if object:IsA("Model") then
+        if Players:GetPlayerFromCharacter(object) then
+            return nil
+        end
+
+        local humanoid = object:FindFirstChildOfClass("Humanoid")
+
+        local mob = humanoid
+            or Tags:HasTag(object,"Animal")
+            or Tags:HasTag(object,"NPC")
+            or Tags:HasTag(object,"Mob")
+            or Tags:HasTag(object,"Boss")
+
+        if mob then
+            if humanoid and humanoid.Health <= 0 then
+                return nil
+            end
+
+            if Contains(name,"boss")
+                or Tags:HasTag(object,"Boss")
+                or object:GetAttribute("IsBoss") == true then
+
+                return "BOSS"
+            end
+
+            if Contains(name,"alpha")
+                or Contains(name,"alfa")
+                or Tags:HasTag(object,"Alpha") then
+
+                return "ALFA"
+            end
+
+            return "NPC"
+        end
+    end
+
+    if object:IsA("BasePart") or object:IsA("Model") then
+        if Tags:HasTag(object,"Gem")
+            or Contains(name,"gem")
+            or Contains(name,"gema")
+            or Contains(name,"crystal") then
+
+            return "GEMA"
+        end
+    end
+
+    return nil
+end
+
+local function FindIsland(object)
+    local current = object
+
+    while current and current ~= workspace do
+        local name = current.Name:lower()
+
+        if Contains(name,"island")
+            or Contains(name,"ilha")
+            or Tags:HasTag(current,"Island") then
+
+            return current.Name
+        end
+
+        current = current.Parent
+    end
+
+    return "Ilha nao identificada"
+end
+
+-- INTERFACE NEURAL V4
+
+local Gui = New("ScreenGui",PG,{
+    Name = "NeuralV4",
+    ResetOnSpawn = false
+})
+
+local Frame = New("Frame",Gui,{
+    Size = UDim2.fromOffset(620,450),
+    Position = UDim2.new(0.5,-310,0.5,-225),
+    BackgroundColor3 = Black,
+    BorderSizePixel = 0,
+    Active = true,
+    Draggable = true
+})
+
+Corner(Frame,12)
+
+New("UIStroke",Frame,{
+    Color = Red,
+    Thickness = 2
+})
+
+local Scale = New("UIScale",Frame,{
+    Scale = 0.75
+})
+
+local function Text(parent,text,x,y,w,h,size,color)
+    return New("TextLabel",parent,{
+        Text = text,
+        Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h),
+        BackgroundTransparency = 1,
+        TextColor3 = color or White,
+        TextSize = size or 13,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left
+    })
+end
+
+Text(Frame,"N E U R A L  /  V4",18,8,520,35,26,Red)
+
+Text(Frame,"TITAN SYSTEM // ANIMAL CONTROL",
+    18,43,520,20,12,White)
+
+New("Frame",Frame,{
+    Position = UDim2.fromOffset(15,72),
+    Size = UDim2.new(1,-30,0,2),
+    BackgroundColor3 = Red,
+    BorderSizePixel = 0
+})
+
+local Left = New("Frame",Frame,{
+    Position = UDim2.fromOffset(15,87),
+    Size = UDim2.fromOffset(245,310),
+    BackgroundColor3 = Dark
+})
+
+Corner(Left,9)
+
+local Right = New("Frame",Frame,{
+    Position = UDim2.fromOffset(270,87),
+    Size = UDim2.fromOffset(335,310),
+    BackgroundColor3 = Dark
+})
+
+Corner(Right,9)
+
+Text(Left,"CONTROL MODULE",12,5,220,28,15,Red)
+Text(Right,"LIVE ENTITY RADAR",12,5,300,28,15,Red)
+
+local Refreshers = {}
+
+local function Button(parent,label,y)
+    local b = New("TextButton",parent,{
+        Text = label,
+        Position = UDim2.fromOffset(10,y),
+        Size = UDim2.new(1,-20,0,36),
+        BackgroundColor3 = Color3.fromRGB(40,40,48),
+        TextColor3 = White,
+        TextSize = 13,
+        Font = Enum.Font.GothamBold
+    })
+
+    Corner(b,6)
+    return b
+end
+
+local function Toggle(label,key,y)
+    local b = Button(Left,label,y)
+
+    local function Refresh()
+        b.Text = label .. (Config[key] and " [ON]" or " [OFF]")
+
+        b.BackgroundColor3 = Config[key]
+            and Color3.fromRGB(165,0,35)
+            or Color3.fromRGB(40,40,48)
+    end
+
+    table.insert(Refreshers,Refresh)
+
+    Connect(b.Activated,function()
+        Config[key] = not Config[key]
+        Target = nil
+        Refresh()
+    end)
+
+    Refresh()
+end
+
+Toggle("AUTO NPC","NPC",39)
+Toggle("AUTO BOSS","Boss",82)
+Toggle("GEM TRACKER","Gems",125)
+Toggle("AUTO SWORD","Sword",168)
+
+local Radius = New("TextBox",Left,{
+    Position = UDim2.fromOffset(10,215),
+    Size = UDim2.new(1,-20,0,35),
+    Text = "RADAR: "..Config.Radius,
+    TextColor3 = Red,
+    TextSize = 14,
+    Font = Enum.Font.GothamBold,
+    BackgroundColor3 = Black,
+    ClearTextOnFocus = false
+})
+
+Corner(Radius,6)
+
+Connect(Radius.Focused,function()
+    Radius.Text = tostring(Config.Radius)
+end)
+
+Connect(Radius.FocusLost,function()
+    Config.Radius = math.clamp(
+        tonumber(Radius.Text) or Config.Radius,
+        50,1000
+    )
+
+    Radius.Text = "RADAR: "..Config.Radius
+end)
+
+local Stop = Button(Left,"EMERGENCY STOP",260)
+Stop.BackgroundColor3 = Color3.fromRGB(140,0,25)
+
+Connect(Stop.Activated,function()
+    Config.NPC = false
+    Config.Boss = false
+    Config.Gems = false
+    Config.Sword = false
+    Target = nil
+
+    for _,fn in ipairs(Refreshers) do
+        fn()
+    end
+end)
+
+local List = New("ScrollingFrame",Right,{
+    Position = UDim2.fromOffset(8,38),
+    Size = UDim2.new(1,-16,1,-45),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = Red,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    CanvasSize = UDim2.new()
+})
+
+New("UIListLayout",List,{
+    Padding = UDim.new(0,5)
+})
+
+local Status = Text(Frame,
+    "SYSTEM STANDBY",18,405,590,20,12,Red)
+
+local Island = Text(Frame,
+    "ILHA: --",18,426,440,18,11,White)
+
+Text(Frame,"[ G ] MENU",515,426,100,18,11,Red)
+
+-- ANIMACAO DO PAINEL
+
+local Visible = true
+local AnimationID = 0
+local CurrentTween
+
+local function Animate(open)
+    AnimationID += 1
+    local id = AnimationID
+
+    if CurrentTween then
+        CurrentTween:Cancel()
+    end
+
+    if open then
+        Frame.Visible = true
+    end
+
+    CurrentTween = Tween:Create(
+        Scale,
+        TweenInfo.new(
+            0.25,
+            Enum.EasingStyle.Quart,
+            Enum.EasingDirection.Out
+        ),
+        {Scale = open and 1 or 0.75}
+    )
+
+    CurrentTween:Play()
+
+    if not open then
+        task.delay(0.25,function()
+            if id == AnimationID and Running then
+                Frame.Visible = false
+            end
+        end)
+    end
+end
+
+Connect(Input.InputBegan,function(key,processed)
+    if processed or Input:GetFocusedTextBox() then
+        return
+    end
+
+    if key.KeyCode == Enum.KeyCode.G then
+        Visible = not Visible
+        Animate(Visible)
+    end
+end)
+
+Animate(true)
+
+-- SCANNER DE ENTIDADES
+
+local function Scan()
+    local root = Root()
+    if not root then
+        Results = {}
+        return
+    end
+
+    local found = {}
+
+    for _,object in ipairs(workspace:GetDescendants()) do
+        if object:IsA("Model") or object:IsA("BasePart") then
+            local kind = Classify(object)
+
+            if kind then
+                local part = Part(object)
+
+                if part and part:IsA("BasePart") then
+                    local distance =
+                        (part.Position-root.Position).Magnitude
+
+                    if distance <= Config.Radius then
+                        table.insert(found,{
+                            Object = object,
+                            Name = object.Name,
+                            Kind = kind,
+                            Distance = distance,
+                            Island = FindIsland(object)
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(found,function(a,b)
+        return a.Distance < b.Distance
+    end)
+
+    Results = found
+end
+
+local function RefreshRadar()
+    for _,object in ipairs(List:GetChildren()) do
+        if object:IsA("Frame") then
+            object:Destroy()
+        end
+    end
+
+    for i,entry in ipairs(Results) do
+        local item = New("Frame",List,{
+            Size = UDim2.new(1,-5,0,48),
+            BackgroundColor3 = Black,
+            LayoutOrder = i
+        })
+
+        Corner(item,5)
+
+        Text(item,
+            entry.Kind.." | "..entry.Name,
+            8,2,220,23,12,Red)
+
+        Text(item,
+            entry.Island,
+            8,25,220,18,10,White)
+
+        local d = Text(item,
+            math.floor(entry.Distance).." ST",
+            230,5,75,30,12,White)
+
+        d.TextXAlignment = Enum.TextXAlignment.Right
+    end
+end
+
+-- PRIORIDADE AUTOMATICA
+
+local function Priority(entry)
+    if entry.Kind == "BOSS" and Config.Boss then
+        return 1
+    elseif entry.Kind == "ALFA" and Config.NPC then
+        return 2
+    elseif entry.Kind == "NPC" and Config.NPC then
+        return 3
+    elseif entry.Kind == "GEMA" and Config.Gems then
+        return 4
+    end
+
+    return math.huge
+end
+
+local function SelectTarget()
+    local best
+    local bestPriority = math.huge
+
+    for _,entry in ipairs(Results) do
+        if IsValid(entry) then
+            local p = Priority(entry)
+
+            if p < bestPriority then
+                best = entry
+                bestPriority = p
+            end
+        end
+    end
+
+    if IsValid(Target)
+        and Priority(Target) < math.huge
+        and Priority(Target) <= bestPriority then
+
+        local root = Root()
+        local part = Part(Target.Object)
+
+        if root and part
+            and (part.Position-root.Position).Magnitude
+                <= Config.Radius then
+
+            return Target
+        end
+    end
+
+    return best
+end
+
+-- ATUALIZACAO
+
+local NextScan = 0
+local NextAttack = 0
+
+Connect(Run.Heartbeat,function()
+    if not Running then return end
+
+    local root = Root()
+    if not root then return end
+
+    local now = os.clock()
+
+    if now >= NextScan then
+        NextScan = now + 1
+
+        Scan()
+        RefreshRadar()
+        Target = SelectTarget()
+    end
+
+    if not IsValid(Target) then
+        Target = SelectTarget()
+    end
+
+    if Target and IsValid(Target) then
+        local part = Part(Target.Object)
+        local height = Config.NPCH
+
+        if Target.Kind == "BOSS" then
+            height = Config.BossH
+        elseif Target.Kind == "ALFA" then
+            height = Config.AlphaH
+        elseif Target.Kind == "GEMA" then
+            height = 3
+        end
+
+        root.CFrame = CFrame.new(
+            part.Position + Vector3.new(0,height,0)
+        ) * root.CFrame.Rotation
+
+        root.AssemblyLinearVelocity = Vector3.zero
+
+        Status.Text = Target.Kind
+            .." | "..Target.Name
+            .." | ALT: "..height
+            .." | RADAR: "..#Results
+
+        Island.Text = "ILHA: "..Target.Island
+    else
+        Status.Text = "SCANNING | ENTIDADES: "..#Results
+        Island.Text = "ILHA: "..FindIsland(root)
+    end
+
+    if Config.Sword and now >= NextAttack then
+        NextAttack = now + Config.AttackInterval
+
+        local character = Player.Character
+        local tool = character
+            and character:FindFirstChildOfClass("Tool")
+
+        if tool and Target
+            and Target.Kind ~= "GEMA"
+            and IsValid(Target) then
+
+            tool:Activate()
+        end
+    end
+end)
+
+Connect(Gui.Destroying,function()
+    Running = false
+
+    for _,connection in ipairs(Connections) do
+        connection:Disconnect()
+    end
+end)
