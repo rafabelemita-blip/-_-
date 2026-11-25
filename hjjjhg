@@ -1,0 +1,1155 @@
+-- NEURAL V8 | ULTIMATE AUTOMATION
+-- Instalador para Roblox Studio
+
+local Run = game:GetService("RunService")
+assert(Run:IsStudio() and not Run:IsRunning(),
+    "Execute na Command Bar, fora do modo Play.")
+
+local function Install(parent, class, name, source)
+    local old = parent:FindFirstChild(name)
+    if old then old:Destroy() end
+
+    local scriptObject = Instance.new(class)
+    scriptObject.Name = name
+    scriptObject.Source = source
+    scriptObject.Parent = parent
+end
+
+-- ========================================
+-- SERVIDOR
+-- ========================================
+
+Install(game:GetService("ServerScriptService"),
+    "Script", "NeuralV8Server", [==[
+
+local Players = game:GetService("Players")
+local Storage = game:GetService("ReplicatedStorage")
+local Run = game:GetService("RunService")
+
+if not Run:IsStudio() then return end
+
+local Remote = Instance.new("RemoteEvent")
+Remote.Name = "NeuralV8Actions"
+Remote.Parent = Storage
+
+local World = Instance.new("Folder", workspace)
+World.Name = "NeuralV8TestWorld"
+
+local States = {}
+local Floor = 1
+local BossDead = false
+
+local Weapons = {
+    {Name = "Espada de Ferro", Damage = 15},
+    {Name = "Espada de Ouro", Damage = 30},
+    {Name = "Espada Alfa", Damage = 60},
+    {Name = "Espada Lendaria", Damage = 120},
+    {Name = "Espada Divina", Damage = 250}
+}
+
+local Species = {
+    {Name = "Wolf", Kind = "NPC", HP = 80},
+    {Name = "Tiger", Kind = "NPC", HP = 120},
+    {Name = "Bear", Kind = "NPC", HP = 150},
+    {Name = "Alpha Wolf", Kind = "ALFA", HP = 300},
+    {Name = "Alpha Tiger", Kind = "ALFA", HP = 400},
+    {Name = "Dragon Boss", Kind = "BOSS", HP = 1500}
+}
+
+local Colors = {
+    NPC = Color3.fromRGB(70,170,255),
+    ALFA = Color3.fromRGB(255,180,60),
+    BOSS = Color3.fromRGB(255,40,70),
+    GEMA = Color3.fromRGB(45,255,180),
+    PORTAL = Color3.fromRGB(150,90,255)
+}
+
+local Spawn = workspace:FindFirstChildWhichIsA(
+    "SpawnLocation", true
+)
+
+local Origin = Spawn and Spawn.Position
+    or Vector3.new(0,5,0)
+
+local function CreateEntity(name, kind, hp, position)
+    local p = Instance.new("Part")
+    p.Name = name
+    p.Anchored = true
+    p.CanCollide = false
+    p.Size = kind == "BOSS"
+        and Vector3.new(10,10,10)
+        or Vector3.new(4,4,4)
+
+    p.Position = position
+    p.Color = Colors[kind]
+    p.Material = Enum.Material.Neon
+
+    p:SetAttribute("Kind", kind)
+    p:SetAttribute("HP", hp)
+    p:SetAttribute("MaxHP", hp)
+
+    local billboard = Instance.new("BillboardGui", p)
+    billboard.Size = UDim2.fromOffset(180,40)
+    billboard.StudsOffset = Vector3.new(0,5,0)
+    billboard.AlwaysOnTop = true
+
+    local label = Instance.new("TextLabel", billboard)
+    label.Size = UDim2.fromScale(1,1)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.new(1,1,1)
+    label.TextStrokeTransparency = 0
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 14
+    label.Text = name
+
+    p.Parent = World
+    return p
+end
+
+local function GenerateFloor()
+    World:ClearAllChildren()
+    BossDead = false
+
+    for i, spec in ipairs(Species) do
+        local count = spec.Kind == "BOSS" and 1 or 4
+
+        for j = 1,count do
+            CreateEntity(
+                spec.Name,
+                spec.Kind,
+                spec.HP * Floor,
+                Origin + Vector3.new(i*18,4,j*15)
+            )
+        end
+    end
+
+    for i = 1,8 do
+        CreateEntity(
+            "Gem Crystal","GEMA",1,
+            Origin + Vector3.new(i*12,3,-20)
+        )
+    end
+end
+
+GenerateFloor()
+
+local function Setup(player)
+    if States[player] then return end
+
+    States[player] = {
+        Aura = false,
+        All = false,
+        NPC = false,
+        Boss = false,
+        Alpha = false,
+        AutoF = false,
+        Click = false,
+        Gems = false,
+        Portal = false,
+        Equip = false,
+        Fusion = false,
+        AuraFusion = false,
+        Tame = false,
+        Rewards = false,
+        SelectedOnly = false,
+
+        Radius = 300,
+        AttackRadius = 65,
+        Interval = 0.25,
+
+        Kills = 0,
+        GemCount = 0,
+        Fusions = 0,
+        RewardsCount = 0,
+        PendingRewards = 0,
+        Weapon = 1,
+        Unlocked = 1,
+        Pet = "",
+        Inventory = {
+            ["Wolf|1"] = 3
+        },
+        Favorites = {},
+        Selected = {},
+        NextAttack = 0,
+        NextFusion = 0,
+        NextUpdate = 0,
+        Status = "STANDBY"
+    }
+end
+
+Players.PlayerAdded:Connect(Setup)
+
+for _,player in ipairs(Players:GetPlayers()) do
+    Setup(player)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+    States[player] = nil
+end)
+
+local function Root(player)
+    return player.Character
+        and player.Character:FindFirstChild(
+            "HumanoidRootPart"
+        )
+end
+
+local function PetPower(key)
+    local tier = tonumber(
+        tostring(key):match("|(%d+)$")
+    ) or 0
+
+    return tier * 10
+end
+
+local function EquipBest(s)
+    s.Weapon = s.Unlocked
+
+    local best = ""
+    local power = -1
+
+    for key,count in pairs(s.Inventory) do
+        if count > 0 and PetPower(key) > power then
+            best = key
+            power = PetPower(key)
+        end
+    end
+
+    s.Pet = best
+end
+
+-- FUSAO DE ANIMAIS
+
+local function Fuse(s, advanced)
+    for key,count in pairs(s.Inventory) do
+        local name,tier = key:match("^(.-)|(%d+)$")
+        tier = tonumber(tier)
+
+        if name and tier and count >= 3
+            and not s.Favorites[name]
+            and tier < 10
+            and (
+                (advanced and tier >= 3)
+                or (not advanced and tier < 3)
+            ) then
+
+            s.Inventory[key] = count - 3
+
+            local upgraded = name.."|"..(tier+1)
+
+            s.Inventory[upgraded] =
+                (s.Inventory[upgraded] or 0) + 1
+
+            s.Fusions += 1
+
+            if s.Equip then
+                EquipBest(s)
+            elseif s.Pet == key
+                and s.Inventory[key] == 0 then
+                s.Pet = ""
+            end
+
+            return true
+        end
+    end
+
+    return false
+end
+
+local function Nearest(player,s)
+    local root = Root(player)
+    if not root then return end
+
+    local best
+    local priority = math.huge
+    local nearest = s.Radius
+
+    for _,obj in ipairs(World:GetChildren()) do
+        local kind = obj:GetAttribute("Kind")
+        local p = math.huge
+
+        if kind == "BOSS" and s.Boss then
+            p = 1
+        elseif kind == "PORTAL"
+            and s.Portal and BossDead then
+            p = 2
+        elseif kind == "ALFA" and s.Alpha then
+            p = 3
+        elseif kind == "NPC" and s.NPC then
+            p = 4
+        elseif kind == "GEMA" and s.Gems then
+            p = 5
+        end
+
+        if s.SelectedOnly
+            and kind ~= "PORTAL"
+            and kind ~= "GEMA"
+            and not s.Selected[obj.Name] then
+
+            p = math.huge
+        end
+
+        local distance =
+            (obj.Position-root.Position).Magnitude
+
+        if p < math.huge and distance <= s.Radius
+            and (
+                p < priority
+                or (p == priority and distance < nearest)
+            ) then
+
+            best = obj
+            priority = p
+            nearest = distance
+        end
+    end
+
+    return best
+end
+
+-- COMBATE E KILL AURA
+
+local function Damage(player,s,obj)
+    if obj.Parent ~= World then return end
+
+    local kind = obj:GetAttribute("Kind")
+
+    if kind ~= "NPC" and kind ~= "ALFA"
+        and kind ~= "BOSS" then
+        return
+    end
+
+    local root = Root(player)
+    if not root then return end
+
+    if (obj.Position-root.Position).Magnitude
+        > s.AttackRadius then
+        return
+    end
+
+    local damage = Weapons[s.Weapon].Damage
+        + PetPower(s.Pet)
+
+    local hp = math.max(
+        0, obj:GetAttribute("HP")-damage
+    )
+
+    obj:SetAttribute("HP",hp)
+
+    local label = obj:FindFirstChildWhichIsA(
+        "TextLabel",true
+    )
+
+    if label then
+        label.Text = obj.Name.." | HP: "..hp
+    end
+
+    if hp <= 0 then
+        local name = obj.Name
+        local position = obj.Position
+        local maximum = obj:GetAttribute("MaxHP")
+        local oldFloor = Floor
+
+        s.Kills += 1
+        s.PendingRewards += 1
+        s.GemCount += kind == "BOSS" and 50 or 2
+
+        s.Unlocked = math.min(
+            #Weapons, 1+math.floor(s.Kills/3)
+        )
+
+        if s.Tame then
+            local key = name.."|1"
+
+            s.Inventory[key] =
+                (s.Inventory[key] or 0)+1
+        end
+
+        obj:Destroy()
+
+        if kind == "BOSS" then
+            BossDead = true
+
+            CreateEntity(
+                "NEXT FLOOR","PORTAL",1,
+                Origin+Vector3.new(125,5,60)
+            )
+        else
+            task.delay(6,function()
+                if Floor == oldFloor then
+                    CreateEntity(
+                        name,kind,maximum,position
+                    )
+                end
+            end)
+        end
+
+        if s.Equip then
+            EquipBest(s)
+        end
+    end
+end
+
+local function Attack(player,s,target)
+    if os.clock() < s.NextAttack then return end
+
+    s.NextAttack = os.clock()+s.Interval
+
+    if s.Aura or s.All then
+        for _,obj in ipairs(World:GetChildren()) do
+            Damage(player,s,obj)
+        end
+
+    elseif target then
+        Damage(player,s,target)
+    end
+end
+
+local function Interact(player,s,target)
+    if not target or target.Parent ~= World then
+        return
+    end
+
+    local root = Root(player)
+    if not root then return end
+
+    local kind = target:GetAttribute("Kind")
+    local distance =
+        (target.Position-root.Position).Magnitude
+
+    if kind == "GEMA" and distance <= 8 then
+        s.GemCount += 10
+        target:Destroy()
+
+    elseif kind == "PORTAL"
+        and BossDead and distance <= 8 then
+
+        Floor += 1
+        GenerateFloor()
+
+    else
+        Attack(player,s,target)
+    end
+end
+
+-- COMANDOS VALIDADOS
+
+local Toggles = {
+    Aura=true, All=true, NPC=true,
+    Boss=true, Alpha=true, AutoF=true,
+    Click=true, Gems=true, Portal=true,
+    Equip=true, Fusion=true, AuraFusion=true,
+    Tame=true, Rewards=true, SelectedOnly=true
+}
+
+Remote.OnServerEvent:Connect(function(player,action,key,value)
+    local s = States[player]
+    if not s then return end
+
+    if action == "Toggle" and Toggles[key] then
+        s[key] = not s[key]
+
+        if key == "Equip" and s.Equip then
+            EquipBest(s)
+        end
+
+    elseif action == "Setting"
+        and type(value) == "number"
+        and value == value
+        and math.abs(value) < math.huge then
+
+        if key == "Radius" then
+            s.Radius = math.clamp(value,50,2000)
+
+        elseif key == "AttackRadius" then
+            s.AttackRadius = math.clamp(value,5,100)
+
+        elseif key == "Interval" then
+            s.Interval = math.clamp(value,0.15,2)
+        end
+
+    elseif action == "Select"
+        and type(key) == "string"
+        and #key <= 100 then
+
+        s.Selected[key] = not s.Selected[key]
+
+    elseif action == "Favorite"
+        and type(key) == "string"
+        and #key <= 100 then
+
+        s.Favorites[key] = not s.Favorites[key]
+
+    elseif action == "EquipNow" then
+        EquipBest(s)
+
+    elseif action == "ManualF" then
+        local target = Nearest(player,s)
+
+        if target then
+            Interact(player,s,target)
+        else
+            Attack(player,s)
+        end
+
+    elseif action == "Stop" then
+        for name in pairs(Toggles) do
+            s[name] = false
+        end
+
+        s.Status = "STOPPED"
+    end
+end)
+
+-- RADAR SEM NOMES DUPLICADOS
+
+local function Snapshot(player,s)
+    local groups = {}
+    local root = Root(player)
+
+    if root then
+        for _,obj in ipairs(World:GetChildren()) do
+            local distance =
+                (obj.Position-root.Position).Magnitude
+
+            if distance <= s.Radius then
+                local g = groups[obj.Name]
+
+                if not g then
+                    groups[obj.Name] = {
+                        Name = obj.Name,
+                        Kind = obj:GetAttribute("Kind"),
+                        Count = 1,
+                        Distance = math.floor(distance)
+                    }
+                else
+                    g.Count += 1
+
+                    g.Distance = math.min(
+                        g.Distance,
+                        math.floor(distance)
+                    )
+                end
+            end
+        end
+    end
+
+    local list = {}
+
+    for _,g in pairs(groups) do
+        table.insert(list,g)
+    end
+
+    table.sort(list,function(a,b)
+        return a.Distance < b.Distance
+    end)
+
+    local data = table.clone(s)
+    data.Groups = list
+    data.Floor = Floor
+    data.WeaponName = Weapons[s.Weapon].Name
+    data.Damage = Weapons[s.Weapon].Damage
+        + PetPower(s.Pet)
+
+    Remote:FireClient(player,data)
+end
+
+-- AUTOMACAO PRINCIPAL
+
+task.spawn(function()
+    while true do
+        local now = os.clock()
+
+        for player,s in pairs(States) do
+            local root = Root(player)
+
+            if root then
+                local target = Nearest(player,s)
+
+                if target then
+                    local kind = target:GetAttribute("Kind")
+
+                    local height =
+                        kind == "BOSS" and 50
+                        or kind == "ALFA" and 30
+                        or kind == "NPC" and 20
+                        or 3
+
+                    root.CFrame = CFrame.new(
+                        target.Position
+                        + Vector3.new(0,height,0)
+                    )
+
+                    root.AssemblyLinearVelocity =
+                        Vector3.zero
+
+                    s.Status = target.Name
+
+                    if s.AutoF or kind == "GEMA"
+                        or kind == "PORTAL" then
+
+                        Interact(player,s,target)
+
+                    else
+                        Attack(player,s,target)
+                    end
+                end
+
+                if s.Aura or s.All or s.Click then
+                    Attack(player,s,target)
+                end
+
+                if now >= s.NextFusion then
+                    s.NextFusion = now+1
+
+                    if s.Fusion then
+                        Fuse(s,false)
+                    end
+
+                    if s.AuraFusion then
+                        Fuse(s,true)
+                    end
+                end
+
+                if s.Rewards and s.PendingRewards > 0 then
+                    s.RewardsCount += s.PendingRewards
+                    s.GemCount += s.PendingRewards*5
+                    s.PendingRewards = 0
+                end
+
+                if s.Equip then
+                    EquipBest(s)
+                end
+
+                if now >= s.NextUpdate then
+                    s.NextUpdate = now+0.8
+                    Snapshot(player,s)
+                end
+            end
+        end
+
+        task.wait(0.15)
+    end
+end)
+
+]==])
+
+-- ========================================
+-- INTERFACE CLIENTE
+-- ========================================
+
+Install(game:GetService("StarterPlayer").StarterPlayerScripts,
+    "LocalScript", "NeuralV8Client", [==[
+
+local Players = game:GetService("Players")
+local Storage = game:GetService("ReplicatedStorage")
+local Input = game:GetService("UserInputService")
+local Tween = game:GetService("TweenService")
+local Run = game:GetService("RunService")
+
+if not Run:IsStudio() then return end
+
+local Player = Players.LocalPlayer
+local Remote = Storage:WaitForChild("NeuralV8Actions")
+
+local C = {
+    BG = Color3.fromRGB(13,16,24),
+    Card = Color3.fromRGB(28,33,45),
+    Blue = Color3.fromRGB(110,135,255),
+    Red = Color3.fromRGB(255,65,95),
+    Green = Color3.fromRGB(45,230,160),
+    White = Color3.fromRGB(240,245,255),
+    Gray = Color3.fromRGB(150,160,180)
+}
+
+local Data = {}
+local Controls = {}
+local FPS = 60
+local Started = os.clock()
+local LastInput = os.clock()
+local Page = "Dashboard"
+local Visible = true
+
+local function New(class,parent,props)
+    local obj = Instance.new(class)
+
+    for key,value in pairs(props or {}) do
+        obj[key] = value
+    end
+
+    obj.Parent = parent
+    return obj
+end
+
+local function Round(obj,r)
+    New("UICorner",obj,{
+        CornerRadius = UDim.new(0,r or 10)
+    })
+end
+
+local function Text(parent,text,x,y,w,h,size,color)
+    return New("TextLabel",parent,{
+        Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h),
+        Text = text,
+        TextSize = size or 13,
+        TextColor3 = color or C.White,
+        Font = Enum.Font.GothamBold,
+        BackgroundTransparency = 1,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd
+    })
+end
+
+local function Button(parent,text,x,y,w,h)
+    local b = New("TextButton",parent,{
+        Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h),
+        Text = text,
+        TextSize = 13,
+        TextColor3 = C.White,
+        BackgroundColor3 = C.Card,
+        Font = Enum.Font.GothamBold
+    })
+
+    Round(b,8)
+    return b
+end
+
+local Gui = New("ScreenGui",
+    Player:WaitForChild("PlayerGui"),{
+        Name = "NeuralV8",
+        ResetOnSpawn = false
+    }
+)
+
+local Main = New("Frame",Gui,{
+    Size = UDim2.fromOffset(960,590),
+    Position = UDim2.fromScale(0.5,0.5),
+    AnchorPoint = Vector2.new(0.5,0.5),
+    BackgroundColor3 = C.BG,
+    BorderSizePixel = 0,
+    Active = true,
+    Draggable = true
+})
+
+Round(Main,18)
+
+New("UIStroke",Main,{
+    Color = C.Blue,
+    Thickness = 1.5
+})
+
+local Scale = New("UIScale",Main,{Scale=0.8})
+
+Text(Main,"NEURAL V8",18,10,220,40,25,C.Blue)
+Text(Main,"ULTIMATE AUTOMATION",18,48,210,20,11,C.Gray)
+
+local Header = Text(
+    Main,"Dashboard",230,12,500,40,26
+)
+
+local Stats = Text(
+    Main,"LOADING...",230,55,700,30,13,C.Green
+)
+
+local Content = New("ScrollingFrame",Main,{
+    Position = UDim2.fromOffset(225,95),
+    Size = UDim2.fromOffset(715,430),
+    BackgroundColor3 = C.Card,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    CanvasSize = UDim2.new()
+})
+
+Round(Content,12)
+
+local Layout = New("UIListLayout",Content,{
+    Padding = UDim.new(0,7),
+    SortOrder = Enum.SortOrder.LayoutOrder
+})
+
+local Padding = New("UIPadding",Content,{
+    PaddingTop = UDim.new(0,12),
+    PaddingLeft = UDim.new(0,12),
+    PaddingRight = UDim.new(0,12)
+})
+
+local Footer = Text(
+    Main,"SYSTEM READY",230,535,700,35,13,C.Green
+)
+
+local Stop = Button(Main,"EMERGENCY STOP",15,535,195,35)
+Stop.BackgroundColor3 = C.Red
+
+Stop.Activated:Connect(function()
+    Remote:FireServer("Stop")
+end)
+
+local Nav = {}
+
+local Pages = {
+    "Dashboard",
+    "Atacar Todos",
+    "Auto Farm",
+    "Bosses",
+    "Animais",
+    "Gemas",
+    "Dungeons",
+    "Auto Equip",
+    "Auto Fusion",
+    "Radar",
+    "AFK",
+    "Configuracoes"
+}
+
+local function Row(text)
+    local b = New("TextButton",Content,{
+        Size = UDim2.new(1,-5,0,38),
+        BackgroundColor3 = C.BG,
+        Text = text,
+        TextColor3 = C.White,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14
+    })
+
+    Round(b,7)
+    return b
+end
+
+local function Toggle(label,key)
+    local b = Row(label)
+
+    Controls[key] = {
+        Button = b,
+        Label = label
+    }
+
+    b.Activated:Connect(function()
+        Remote:FireServer("Toggle",key)
+    end)
+end
+
+local function Setting(label,key)
+    local box = New("TextBox",Content,{
+        Size = UDim2.new(1,-5,0,38),
+        BackgroundColor3 = C.BG,
+        TextColor3 = C.Blue,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        Text = label..": "..tostring(Data[key] or ""),
+        ClearTextOnFocus = false
+    })
+
+    Round(box,7)
+
+    box.Focused:Connect(function()
+        box.Text = tostring(Data[key] or "")
+    end)
+
+    box.FocusLost:Connect(function()
+        local n = tonumber(box.Text)
+
+        if n then
+            Remote:FireServer("Setting",key,n)
+        end
+
+        box.Text = label..": "..tostring(n or Data[key])
+    end)
+end
+
+local DynamicRows = {}
+
+local function Dynamic(index,text,action,key)
+    local b = DynamicRows[index]
+
+    if not b then
+        b = Row(text)
+        DynamicRows[index] = b
+        b:SetAttribute("Action",action or "")
+        b:SetAttribute("Key",key or "")
+
+        b.Activated:Connect(function()
+            local a = b:GetAttribute("Action")
+            local k = b:GetAttribute("Key")
+
+            if a ~= "" then
+                Remote:FireServer(a,k)
+            end
+        end)
+    end
+
+    b.Visible = true
+    b.Text = text
+    b:SetAttribute("Action",action or "")
+    b:SetAttribute("Key",key or "")
+end
+
+local function Render()
+    for key,control in pairs(Controls) do
+        control.Button.Text = control.Label..
+            (Data[key] and " [ON]" or " [OFF]")
+
+        control.Button.BackgroundColor3 =
+            Data[key] and C.Blue or C.BG
+    end
+
+    Stats.Text =
+        "KILLS: "..(Data.Kills or 0)
+        .."   |   GEMAS: "..(Data.GemCount or 0)
+        .."   |   FUSOES: "..(Data.Fusions or 0)
+        .."   |   FPS: "..math.floor(FPS)
+
+    Footer.Text =
+        "ALVO: "..(Data.Status or "--")
+        .."   |   FLOOR: "..(Data.Floor or 1)
+        .."   |   [G] MENU"
+
+    local index = 0
+
+    if Page == "Radar" or Page == "Dashboard"
+        or Page == "Bosses" or Page == "Animais" then
+
+        for _,g in ipairs(Data.Groups or {}) do
+            local show =
+                Page == "Radar"
+                or Page == "Dashboard"
+                or (Page == "Bosses" and g.Kind == "BOSS")
+                or (
+                    Page == "Animais"
+                    and (g.Kind == "NPC" or g.Kind == "ALFA")
+                )
+
+            if show then
+                index += 1
+
+                local selected = Data.Selected
+                    and Data.Selected[g.Name]
+
+                Dynamic(index,
+                    (selected and "[X] " or "[ ] ")
+                    ..g.Name.."   |   "..g.Kind
+                    .."   |   x"..g.Count
+                    .."   |   "..g.Distance.." ST",
+                    "Select",g.Name
+                )
+            end
+        end
+
+    elseif Page == "Auto Equip" then
+        index += 1
+        Dynamic(index,"ARMA: "..(Data.WeaponName or "--"))
+
+        index += 1
+        Dynamic(index,"ANIMAL: "..(Data.Pet or "--"))
+
+        index += 1
+        Dynamic(index,"DANO: "..(Data.Damage or 0))
+
+    elseif Page == "Auto Fusion" then
+        for key,count in pairs(Data.Inventory or {}) do
+            if count > 0 then
+                local name = key:match("^(.-)|")
+
+                local favorite = Data.Favorites
+                    and Data.Favorites[name]
+
+                index += 1
+
+                Dynamic(index,
+                    (favorite and "[PROTEGIDO] " or "")
+                    ..key.."   |   x"..count,
+                    "Favorite",name
+                )
+            end
+        end
+
+    elseif Page == "AFK" then
+        index += 1
+        Dynamic(index,
+            "INATIVIDADE: "
+            ..math.floor(os.clock()-LastInput).."s"
+        )
+
+        index += 1
+        Dynamic(index,
+            "SESSAO: "
+            ..math.floor(os.clock()-Started).."s"
+        )
+
+        index += 1
+        Dynamic(index,"FPS: "..math.floor(FPS))
+    end
+
+    for i=index+1,#DynamicRows do
+        DynamicRows[i].Visible = false
+    end
+end
+
+local function OpenPage(name)
+    Page = name
+    Header.Text = name
+
+    table.clear(Controls)
+    table.clear(DynamicRows)
+
+    for _,obj in ipairs(Content:GetChildren()) do
+        if obj:IsA("GuiObject") then
+            obj:Destroy()
+        end
+    end
+
+    for tab,b in pairs(Nav) do
+        b.BackgroundColor3 =
+            tab == name and C.Blue or C.Card
+    end
+
+    if name == "Atacar Todos" then
+        Toggle("KILL AURA","Aura")
+        Toggle("ATACAR TODOS","All")
+        Toggle("AUTO CLICK","Click")
+        Toggle("AUTO F","AutoF")
+        Setting("RAIO DE DANO","AttackRadius")
+        Setting("INTERVALO","Interval")
+
+    elseif name == "Auto Farm" then
+        Toggle("AUTO NPC","NPC")
+        Toggle("AUTO ALPHA","Alpha")
+        Toggle("AUTO BOSS","Boss")
+        Toggle("AUTO TAME","Tame")
+        Toggle("AUTO REWARDS","Rewards")
+
+    elseif name == "Bosses" then
+        Toggle("AUTO BOSS","Boss")
+
+    elseif name == "Animais" then
+        Toggle("AUTO NPC","NPC")
+        Toggle("AUTO ALPHA","Alpha")
+
+    elseif name == "Gemas" then
+        Toggle("AUTO GEMAS","Gems")
+        Toggle("AUTO REWARDS","Rewards")
+
+    elseif name == "Dungeons" then
+        Toggle("AUTO NEXT FLOOR","Portal")
+        Toggle("AUTO BOSS","Boss")
+
+    elseif name == "Auto Equip" then
+        Toggle("AUTO EQUIP BEST","Equip")
+
+        local b = Row("EQUIPAR MELHORES AGORA")
+
+        b.Activated:Connect(function()
+            Remote:FireServer("EquipNow")
+        end)
+
+    elseif name == "Auto Fusion" then
+        Toggle("AUTO FUSION","Fusion")
+        Toggle("AUTO AURA FUSION","AuraFusion")
+
+        Row("Clique no animal para proteger da fusao")
+
+    elseif name == "Radar" then
+        Toggle("APENAS SELECIONADOS","SelectedOnly")
+        Setting("RAIO DO RADAR","Radius")
+
+    elseif name == "Configuracoes" then
+        Setting("RADAR","Radius")
+        Setting("KILL AURA","AttackRadius")
+        Setting("INTERVALO","Interval")
+    end
+
+    Render()
+end
+
+for i,name in ipairs(Pages) do
+    local b = Button(
+        Main,name,15,85+(i-1)*36,195,32
+    )
+
+    Nav[name] = b
+
+    b.Activated:Connect(function()
+        OpenPage(name)
+    end)
+end
+
+-- ANIMACAO E TECLA G
+
+local Animation
+local AnimationID = 0
+
+local function Animate()
+    AnimationID += 1
+    local id = AnimationID
+
+    if Animation then
+        Animation:Cancel()
+    end
+
+    if Visible then
+        Main.Visible = true
+    end
+
+    local camera = workspace.CurrentCamera
+
+    local fit = camera and math.min(
+        1,
+        camera.ViewportSize.X/1000,
+        camera.ViewportSize.Y/630
+    ) or 1
+
+    Animation = Tween:Create(
+        Scale,
+        TweenInfo.new(
+            0.25,Enum.EasingStyle.Quart,
+            Enum.EasingDirection.Out
+        ),
+        {Scale = Visible and fit or fit*0.8}
+    )
+
+    Animation:Play()
+
+    if not Visible then
+        task.delay(0.25,function()
+            if id == AnimationID then
+                Main.Visible = false
+            end
+        end)
+    end
+end
+
+Input.InputBegan:Connect(function(key,processed)
+    LastInput = os.clock()
+
+    if processed or Input:GetFocusedTextBox() then
+        return
+    end
+
+    if key.KeyCode == Enum.KeyCode.G then
+        Visible = not Visible
+        Animate()
+
+    elseif key.KeyCode == Enum.KeyCode.F then
+        Remote:FireServer("ManualF")
+    end
+end)
+
+Run.RenderStepped:Connect(function(dt)
+    FPS = FPS*0.95
+        + (1/math.max(dt,0.001))*0.05
+end)
+
+Remote.OnClientEvent:Connect(function(snapshot)
+    Data = snapshot
+
+    if Visible then
+        Render()
+    end
+end)
+
+OpenPage("Dashboard")
+Animate()
+
+]==])
