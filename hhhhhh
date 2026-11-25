@@ -1,0 +1,965 @@
+-- NEURAL V7 | AUTO CONTROL
+
+local Players = game:GetService("Players")
+local Input = game:GetService("UserInputService")
+local Run = game:GetService("RunService")
+local Tween = game:GetService("TweenService")
+local Tags = game:GetService("CollectionService")
+
+local Player = Players.LocalPlayer
+local PG = Player:WaitForChild("PlayerGui")
+
+local Config = {
+    NPC = false,
+    Boss = false,
+    Gems = false,
+    Portal = false,
+    AutoF = true,
+    FreeF = false,
+    Click = false,
+    SelectedOnly = false,
+    Radius = 300,
+    Interval = 0.25
+}
+
+local Colors = {
+    BG = Color3.fromRGB(13,16,23),
+    Card = Color3.fromRGB(27,32,44),
+    Red = Color3.fromRGB(243,74,101),
+    Green = Color3.fromRGB(70,217,162),
+    Blue = Color3.fromRGB(130,155,255),
+    White = Color3.fromRGB(245,245,250),
+    Gray = Color3.fromRGB(145,155,175)
+}
+
+for _,name in ipairs({
+    "NeuralV3","NeuralV4","NeuralV5",
+    "NeuralV6","NeuralV7"
+}) do
+    local old = PG:FindFirstChild(name)
+    if old then old:Destroy() end
+end
+
+local Running = true
+local Visible = true
+local Connections = {}
+local Cache = {}
+local Groups = {}
+local Selected = {}
+local Overrides = {}
+local Rows = {}
+local Target
+local PortalTarget
+local Virtual
+local FCount = 0
+local FPS = 60
+local InputStatus = "NAO TESTADO"
+
+local ok, result = pcall(function()
+    return Input:CreateVirtualInput()
+end)
+
+if ok then
+    Virtual = result
+end
+
+local function Connect(signal,fn)
+    local c = signal:Connect(fn)
+    table.insert(Connections,c)
+    return c
+end
+
+local function New(class,parent,props)
+    local obj = Instance.new(class)
+
+    for k,v in pairs(props or {}) do
+        obj[k] = v
+    end
+
+    obj.Parent = parent
+    return obj
+end
+
+local function Round(obj,r)
+    New("UICorner",obj,{
+        CornerRadius = UDim.new(0,r or 10)
+    })
+end
+
+local function Text(parent,value,x,y,w,h,size,color)
+    return New("TextLabel",parent,{
+        Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h),
+        BackgroundTransparency = 1,
+        Text = value,
+        TextSize = size or 13,
+        TextColor3 = color or Colors.White,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd
+    })
+end
+
+local function Button(parent,label,x,y,w,h)
+    local b = New("TextButton",parent,{
+        Text = label,
+        Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h),
+        BackgroundColor3 = Colors.Card,
+        TextColor3 = Colors.White,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        AutoButtonColor = false
+    })
+
+    Round(b,9)
+    return b
+end
+
+local function Root()
+    return Player.Character
+        and Player.Character:FindFirstChild(
+            "HumanoidRootPart"
+        )
+end
+
+local function Part(obj)
+    if not obj then return end
+
+    if obj:IsA("BasePart") then
+        return obj
+    end
+
+    if obj:IsA("Model") then
+        return obj:FindFirstChild("HumanoidRootPart")
+            or obj.PrimaryPart
+            or obj:FindFirstChildWhichIsA("BasePart",true)
+    end
+end
+
+local function Name(obj)
+    return tostring(
+        obj:GetAttribute("DisplayName")
+        or obj:GetAttribute("MobName")
+        or obj.Name
+    )
+end
+
+local function Has(text,word)
+    return string.find(
+        tostring(text):lower(),word,1,true
+    ) ~= nil
+end
+
+local function IsPortal(text)
+    text = tostring(text):lower()
+    text = text:gsub("[%s_%-]","")
+
+    return text == "nextfloor"
+        or text == "nexusfloor"
+end
+
+local function Classify(obj)
+    local name = Name(obj)
+
+    if obj:IsA("Model") then
+        if Players:GetPlayerFromCharacter(obj) then
+            return
+        end
+
+        local h = obj:FindFirstChildOfClass("Humanoid")
+
+        if h and h.Health <= 0 then
+            return
+        end
+
+        local category = tostring(
+            obj:GetAttribute("Type")
+            or obj:GetAttribute("Category")
+            or obj:GetAttribute("Rank")
+            or ""
+        )
+
+        local boss =
+            Tags:HasTag(obj,"Boss")
+            or Tags:HasTag(obj,"WorldBoss")
+            or obj:GetAttribute("IsBoss") == true
+            or Has(name,"boss")
+            or Has(category,"boss")
+
+        local alpha =
+            Has(name,"alpha")
+            or Has(name,"alfa")
+            or Tags:HasTag(obj,"Alpha")
+
+        if h or boss or alpha
+            or Tags:HasTag(obj,"Animal")
+            or Tags:HasTag(obj,"NPC") then
+
+            if Overrides[name:lower()] then
+                return Overrides[name:lower()]
+            end
+
+            if boss then return "BOSS" end
+            if alpha then return "ALFA" end
+
+            return "NPC"
+        end
+    end
+
+    if Tags:HasTag(obj,"Gem")
+        or Has(name,"gem")
+        or Has(name,"crystal") then
+
+        return "GEMA"
+    end
+end
+
+-- CACHE OTIMIZADO
+
+local function Index(obj)
+    if obj:IsA("Model")
+        or obj:IsA("TextLabel")
+        or (
+            obj:IsA("BasePart")
+            and (
+                IsPortal(obj.Name)
+                or Has(obj.Name,"gem")
+                or Has(obj.Name,"crystal")
+            )
+        ) then
+
+        Cache[obj] = true
+    end
+end
+
+Connect(workspace.DescendantAdded,Index)
+
+Connect(workspace.DescendantRemoving,function(obj)
+    Cache[obj] = nil
+end)
+
+task.spawn(function()
+    for i,obj in ipairs(workspace:GetDescendants()) do
+        if not Running then return end
+
+        if obj:IsDescendantOf(workspace) then
+            Index(obj)
+        end
+
+        if i % 200 == 0 then
+            task.wait()
+        end
+    end
+end)
+
+-- INTERFACE
+
+local Gui = New("ScreenGui",PG,{
+    Name = "NeuralV7",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true
+})
+
+local Main = New("Frame",Gui,{
+    Size = UDim2.fromOffset(800,540),
+    Position = UDim2.fromScale(0.5,0.5),
+    AnchorPoint = Vector2.new(0.5,0.5),
+    BackgroundColor3 = Colors.BG,
+    Active = true,
+    Draggable = true,
+    BorderSizePixel = 0
+})
+
+Round(Main,18)
+
+New("UIStroke",Main,{
+    Color = Colors.Red,
+    Thickness = 1.5
+})
+
+local Scale = New("UIScale",Main,{Scale = 0.8})
+
+Text(Main,"NEURAL V7",20,10,400,40,26,Colors.Red)
+Text(Main,"AUTOMATION CONTROL CENTER",20,48,500,20,11,Colors.Gray)
+
+local Performance = Text(
+    Main,"FPS: --",660,15,130,28,14,Colors.Green
+)
+
+local Panel = New("Frame",Main,{
+    Position = UDim2.fromOffset(15,85),
+    Size = UDim2.fromOffset(250,390),
+    BackgroundColor3 = Colors.Card,
+    BorderSizePixel = 0
+})
+
+Round(Panel,12)
+
+local Refreshers = {}
+
+local function Toggle(label,key,y,color)
+    local b = Button(Panel,label,10,y,230,35)
+
+    local function Refresh()
+        b.Text = label .. (
+            Config[key] and " [ON]" or " [OFF]"
+        )
+
+        b.BackgroundColor3 = Config[key]
+            and color or Colors.BG
+    end
+
+    Refreshers[key] = Refresh
+
+    Connect(b.Activated,function()
+        Config[key] = not Config[key]
+        Target = nil
+        PortalTarget = nil
+        Refresh()
+    end)
+
+    Refresh()
+end
+
+Toggle("AUTO NPC","NPC",10,Colors.Blue)
+Toggle("AUTO BOSS","Boss",50,Colors.Red)
+Toggle("AUTO F","AutoF",90,Colors.Green)
+Toggle("F CONTINUO","FreeF",130,Colors.Green)
+Toggle("AUTO CLICK","Click",170,Colors.Blue)
+Toggle("NEXT FLOOR","Portal",210,Colors.Red)
+Toggle("GEM TRACKER","Gems",250,Colors.Blue)
+Toggle("SO SELECIONADOS","SelectedOnly",290,Colors.Blue)
+
+local Stop = Button(
+    Panel,"EMERGENCY STOP",10,340,230,38
+)
+
+Stop.BackgroundColor3 = Colors.Red
+
+Connect(Stop.Activated,function()
+    for key,refresh in pairs(Refreshers) do
+        Config[key] = false
+        refresh()
+    end
+
+    Target = nil
+    PortalTarget = nil
+end)
+
+-- RADAR DE CRIATURAS
+
+local Radar = New("Frame",Main,{
+    Position = UDim2.fromOffset(280,85),
+    Size = UDim2.fromOffset(505,390),
+    BackgroundColor3 = Colors.Card,
+    BorderSizePixel = 0
+})
+
+Round(Radar,12)
+
+Text(Radar,"LIVE ENTITY RADAR",14,5,480,35,19,Colors.Blue)
+
+local Search = New("TextBox",Radar,{
+    Position = UDim2.fromOffset(10,45),
+    Size = UDim2.fromOffset(485,32),
+    Text = "",
+    PlaceholderText = "Pesquisar criatura...",
+    BackgroundColor3 = Colors.BG,
+    TextColor3 = Colors.White,
+    PlaceholderColor3 = Colors.Gray,
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    ClearTextOnFocus = false
+})
+
+Round(Search,8)
+
+Text(Radar,"NOME",12,82,200,25,11,Colors.Gray)
+Text(Radar,"QTD",270,82,50,25,11,Colors.Gray)
+Text(Radar,"DIST",330,82,65,25,11,Colors.Gray)
+Text(Radar,"TIPO",410,82,80,25,11,Colors.Gray)
+
+local List = New("ScrollingFrame",Radar,{
+    Position = UDim2.fromOffset(10,110),
+    Size = UDim2.fromOffset(485,270),
+    BackgroundTransparency = 1,
+    ScrollBarThickness = 3,
+    BorderSizePixel = 0,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    CanvasSize = UDim2.new()
+})
+
+New("UIListLayout",List,{
+    Padding = UDim.new(0,4),
+    SortOrder = Enum.SortOrder.LayoutOrder
+})
+
+local Status = Text(
+    Main,"SYSTEM READY",20,485,600,23,12,Colors.Green
+)
+
+local Counter = Text(
+    Main,"F: 0",660,485,130,23,12,Colors.Green
+)
+
+local Radius = New("TextBox",Main,{
+    Position = UDim2.fromOffset(20,510),
+    Size = UDim2.fromOffset(150,23),
+    BackgroundColor3 = Colors.Card,
+    Text = "300",
+    TextColor3 = Colors.Blue,
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    ClearTextOnFocus = false
+})
+
+Round(Radius,6)
+
+Connect(Radius.FocusLost,function()
+    Config.Radius = math.clamp(
+        tonumber(Radius.Text) or 300,50,2000
+    )
+
+    Radius.Text = tostring(Config.Radius)
+end)
+
+Text(Main,"RADAR",180,510,90,23,11,Colors.Gray)
+
+local Delay = New("TextBox",Main,{
+    Position = UDim2.fromOffset(280,510),
+    Size = UDim2.fromOffset(110,23),
+    BackgroundColor3 = Colors.Card,
+    Text = "250",
+    TextColor3 = Colors.Green,
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    ClearTextOnFocus = false
+})
+
+Round(Delay,6)
+
+Connect(Delay.FocusLost,function()
+    Config.Interval = math.clamp(
+        tonumber(Delay.Text) or 250,
+        100,2000
+    ) / 1000
+
+    Delay.Text = tostring(Config.Interval*1000)
+end)
+
+Text(Main,"AUTO F / MS",400,510,150,23,11,Colors.Gray)
+Text(Main,"[ G ] MENU",660,510,130,23,11,Colors.Gray)
+
+-- DETECCAO DE PORTAIS
+
+local function PortalPart(obj)
+    if not obj:IsDescendantOf(workspace) then
+        return
+    end
+
+    if obj:IsA("TextLabel") then
+        if not IsPortal(obj.Text) then return end
+
+        local parent = obj.Parent
+
+        while parent and parent ~= workspace do
+
+            if parent:IsA("BillboardGui")
+                or parent:IsA("SurfaceGui") then
+
+                local adornee = parent.Adornee
+
+                if adornee and adornee:IsA("Attachment") then
+                    adornee = adornee.Parent
+                end
+
+                local part = Part(adornee)
+
+                if part then return part end
+            end
+
+            local p = Part(parent)
+
+            if p then return p end
+
+            parent = parent.Parent
+        end
+
+    elseif IsPortal(obj.Name) then
+        return Part(obj)
+    end
+end
+
+local function Valid(entry)
+    if not entry or not entry.Object then
+        return false
+    end
+
+    if not entry.Object:IsDescendantOf(workspace) then
+        return false
+    end
+
+    local h = entry.Object:FindFirstChildOfClass("Humanoid")
+
+    return Part(entry.Object) ~= nil
+        and (not h or h.Health > 0)
+end
+
+local function Height(kind)
+    if kind == "BOSS" then return 50 end
+    if kind == "ALFA" then return 30 end
+    if kind == "GEMA" then return 3 end
+    return 20
+end
+
+local function Priority(entry)
+    if Config.SelectedOnly
+        and not Selected[entry.Key] then
+        return math.huge
+    end
+
+    if entry.Kind == "BOSS" and Config.Boss then
+        return 1
+    end
+
+    if entry.Kind == "ALFA" and Config.NPC then
+        return 2
+    end
+
+    if entry.Kind == "NPC" and Config.NPC then
+        return 3
+    end
+
+    if entry.Kind == "GEMA" and Config.Gems then
+        return 4
+    end
+
+    return math.huge
+end
+
+-- SCANNER AGRUPADO
+
+local function Scan()
+    local root = Root()
+
+    if not root then
+        Target = nil
+        PortalTarget = nil
+        return
+    end
+
+    local grouped = {}
+    local best
+    local bestPriority = math.huge
+    local portal
+    local portalDistance = Config.Radius
+    local bossAlive = false
+
+    for obj in pairs(Cache) do
+        if not obj:IsDescendantOf(workspace) then
+            Cache[obj] = nil
+        else
+            local pp = PortalPart(obj)
+
+            if pp then
+                local distance =
+                    (pp.Position-root.Position).Magnitude
+
+                if distance <= portalDistance then
+                    portal = pp
+                    portalDistance = distance
+                end
+
+            elseif not obj:IsA("TextLabel") then
+                local kind = Classify(obj)
+                local part = kind and Part(obj)
+
+                if part then
+                    local distance =
+                        (part.Position-root.Position).Magnitude
+
+                    if distance <= Config.Radius then
+                        local name = Name(obj)
+                        local key = name:lower()
+
+                        if kind == "BOSS" then
+                            bossAlive = true
+                        end
+
+                        local g = grouped[key]
+
+                        if not g then
+                            grouped[key] = {
+                                Name = name,
+                                Key = key,
+                                Kind = kind,
+                                Count = 1,
+                                Distance = distance
+                            }
+                        else
+                            g.Count += 1
+                            g.Distance = math.min(
+                                g.Distance,distance
+                            )
+                        end
+
+                        local entry = {
+                            Object = obj,
+                            Key = key,
+                            Name = name,
+                            Kind = kind,
+                            Distance = distance
+                        }
+
+                        local p = Priority(entry)
+
+                        if p < math.huge and (
+                            not best
+                            or p < bestPriority
+                            or (
+                                p == bestPriority
+                                and distance < best.Distance
+                            )
+                        ) then
+                            best = entry
+                            bestPriority = p
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    Groups = {}
+
+    for _,g in pairs(grouped) do
+        table.insert(Groups,g)
+    end
+
+    table.sort(Groups,function(a,b)
+        return a.Distance < b.Distance
+    end)
+
+    Target = best
+
+    PortalTarget = Config.Portal
+        and not bossAlive
+        and portal or nil
+end
+
+-- REUTILIZACAO DAS LINHAS DO RADAR
+
+local Render
+
+local function CreateRow(i)
+    local frame = New("Frame",List,{
+        Size = UDim2.new(1,-5,0,34),
+        BackgroundColor3 = Colors.BG,
+        LayoutOrder = i,
+        BorderSizePixel = 0
+    })
+
+    Round(frame,6)
+
+    local row = {Frame = frame}
+
+    row.Name = Button(frame,"",4,2,250,30)
+    row.Count = Text(frame,"",260,0,50,34,12)
+    row.Distance = Text(frame,"",320,0,70,34,12)
+    row.Type = Button(frame,"",400,2,75,30)
+
+    Connect(row.Name.Activated,function()
+        if row.Entry then
+            local key = row.Entry.Key
+
+            Selected[key] = not Selected[key]
+
+            Target = nil
+            Render()
+        end
+    end)
+
+    Connect(row.Type.Activated,function()
+        if not row.Entry
+            or row.Entry.Kind == "GEMA" then
+            return
+        end
+
+        local cycle = {
+            NPC = "ALFA",
+            ALFA = "BOSS",
+            BOSS = "NPC"
+        }
+
+        Overrides[row.Entry.Key] =
+            cycle[row.Entry.Kind] or "NPC"
+
+        Scan()
+        Render()
+    end)
+
+    Rows[i] = row
+    return row
+end
+
+Render = function()
+    if not Visible then return end
+
+    local index = 0
+
+    for _,g in ipairs(Groups) do
+        if Has(g.Name,Search.Text:lower()) then
+            index += 1
+
+            if index > 100 then break end
+
+            local row = Rows[index] or CreateRow(index)
+
+            row.Entry = g
+            row.Frame.Visible = true
+
+            row.Name.Text =
+                (Selected[g.Key] and "[X] " or "[ ] ")
+                ..g.Name
+
+            row.Name.BackgroundColor3 =
+                Selected[g.Key]
+                and Colors.Blue or Colors.BG
+
+            row.Count.Text = tostring(g.Count)
+
+            row.Distance.Text =
+                math.floor(g.Distance).." ST"
+
+            row.Type.Text = g.Kind
+
+            row.Type.TextColor3 =
+                g.Kind == "BOSS" and Colors.Red
+                or g.Kind == "GEMA" and Colors.Green
+                or Colors.Blue
+        end
+    end
+
+    for i = index+1,#Rows do
+        Rows[i].Frame.Visible = false
+        Rows[i].Entry = nil
+    end
+end
+
+Connect(Search:GetPropertyChangedSignal("Text"),Render)
+
+-- AUTO F
+
+local function PressF()
+    if Input:GetFocusedTextBox() then
+        return
+    end
+
+    if not Virtual then
+        InputStatus = "AUTO F INDISPONIVEL"
+        return
+    end
+
+    local success = pcall(function()
+        Virtual:SendKey(
+            true,Enum.KeyCode.F,false
+        )
+
+        task.wait(0.04)
+
+        Virtual:SendKey(
+            false,Enum.KeyCode.F,false
+        )
+    end)
+
+    if success then
+        FCount += 1
+        InputStatus = "AUTO F ATIVO"
+    else
+        InputStatus = "ENTRADA VIRTUAL BLOQUEADA"
+    end
+end
+
+-- AUTO CLICK
+
+local function AutoClick()
+    local char = Player.Character
+
+    local tool = char
+        and char:FindFirstChildOfClass("Tool")
+
+    if tool then
+        tool:Activate()
+    end
+end
+
+-- ABERTURA ANIMADA
+
+local Animation
+local AnimationID = 0
+
+local function Animate(open)
+    AnimationID += 1
+    local id = AnimationID
+
+    if Animation then
+        Animation:Cancel()
+    end
+
+    if open then Main.Visible = true end
+
+    local camera = workspace.CurrentCamera
+
+    local fit = camera and math.min(
+        1,
+        camera.ViewportSize.X/840,
+        camera.ViewportSize.Y/580
+    ) or 1
+
+    Animation = Tween:Create(
+        Scale,
+        TweenInfo.new(
+            0.25,
+            Enum.EasingStyle.Quart,
+            Enum.EasingDirection.Out
+        ),
+        {Scale = open and fit or fit*0.8}
+    )
+
+    Animation:Play()
+
+    if not open then
+        task.delay(0.25,function()
+            if Running and id == AnimationID then
+                Main.Visible = false
+            end
+        end)
+    else
+        Render()
+    end
+end
+
+Connect(Input.InputBegan,function(key,processed)
+    if processed or Input:GetFocusedTextBox() then
+        return
+    end
+
+    if key.KeyCode == Enum.KeyCode.G then
+        Visible = not Visible
+        Animate(Visible)
+    end
+end)
+
+-- MONITOR DE FPS
+
+Connect(Run.RenderStepped,function(dt)
+    FPS = FPS*0.95
+        + (1/math.max(dt,0.001))*0.05
+end)
+
+-- LOOP PRINCIPAL OTIMIZADO
+
+local NextScan = 0
+local NextInput = 0
+local NextStats = 0
+
+task.spawn(function()
+    while Running do
+        local now = os.clock()
+        local root = Root()
+
+        if now >= NextScan then
+            NextScan = now + 1.5
+            Scan()
+            Render()
+        end
+
+        local active = false
+
+        if root then
+            if Config.Portal
+                and PortalTarget
+                and PortalTarget:IsDescendantOf(workspace) then
+
+                root.CFrame = CFrame.new(
+                    PortalTarget.Position
+                    + Vector3.new(0,3,0)
+                )
+
+                root.AssemblyLinearVelocity =
+                    Vector3.zero
+
+                Status.Text = "PORTAL | NEXT FLOOR"
+
+                active = true
+
+            elseif Valid(Target)
+                and Priority(Target) < math.huge then
+
+                local p = Part(Target.Object)
+
+                root.CFrame = CFrame.new(
+                    p.Position
+                    + Vector3.new(
+                        0,Height(Target.Kind),0
+                    )
+                ) * root.CFrame.Rotation
+
+                root.AssemblyLinearVelocity =
+                    Vector3.zero
+
+                Status.Text =
+                    Target.Kind.." | "..Target.Name
+
+                active = true
+            else
+                Target = nil
+                Status.Text = "PROCURANDO ALVO..."
+            end
+        end
+
+        if now >= NextInput then
+            NextInput = now + Config.Interval
+
+            if Config.FreeF
+                or (Config.AutoF and active) then
+
+                PressF()
+            end
+
+            if Config.Click and active then
+                AutoClick()
+            end
+        end
+
+        if now >= NextStats then
+            NextStats = now + 1
+
+            Performance.Text =
+                "FPS: "..math.floor(FPS)
+
+            Counter.Text = "F: "..FCount
+
+            if Config.AutoF or Config.FreeF then
+                Status.Text = Status.Text
+                    .." | "..InputStatus
+            end
+        end
+
+        task.wait(0.08)
+    end
+end)
+
+Connect(Gui.Destroying,function()
+    Running = false
+
+    for _,c in ipairs(Connections) do
+        c:Disconnect()
+    end
+
+    table.clear(Cache)
+    table.clear(Groups)
+end)
+
+Animate(true)
