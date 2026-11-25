@@ -1,0 +1,244 @@
+local Players = game:GetService("Players")
+local Run = game:GetService("RunService")
+local Input = game:GetService("UserInputService")
+local Player = Players.LocalPlayer
+local PG = Player:WaitForChild("PlayerGui")
+
+local Config = {
+    Height = 20,
+    Radius = 200,
+    SwordRadius = 60,
+    Interval = 0.25,
+    Teleport = false,
+    Sword = false
+}
+
+local Target
+local Connections = {}
+local NextSearch = 0
+local NextAttack = 0
+
+local Old = PG:FindFirstChild("NeuralV3")
+if Old then Old:Destroy() end
+
+local function Connect(signal, fn)
+    local c = signal:Connect(fn)
+    table.insert(Connections, c)
+end
+
+local function Root()
+    return Player.Character
+        and Player.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function TargetPart(model)
+    return model and (
+        model:FindFirstChild("HumanoidRootPart")
+        or model.PrimaryPart
+    )
+end
+
+local function Valid(model)
+    if not model or not model:IsDescendantOf(workspace) then
+        return false
+    end
+
+    local h = model:FindFirstChildOfClass("Humanoid")
+    local p = TargetPart(model)
+
+    return h and h.Health > 0
+        and p and p:IsA("BasePart")
+        and not Players:GetPlayerFromCharacter(model)
+end
+
+local function Nearest(radius)
+    local root = Root()
+    if not root then return nil end
+
+    local best
+    local distance = radius
+
+    for _, model in ipairs(workspace:GetDescendants()) do
+        if model:IsA("Model") and Valid(model) then
+            local d = (TargetPart(model).Position - root.Position).Magnitude
+
+            if d < distance then
+                distance = d
+                best = model
+            end
+        end
+    end
+
+    return best
+end
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "NeuralV3"
+Gui.ResetOnSpawn = false
+Gui.Parent = PG
+
+local Frame = Instance.new("Frame", Gui)
+Frame.Size = UDim2.fromOffset(380, 310)
+Frame.Position = UDim2.new(0.5, -190, 0.5, -155)
+Frame.BackgroundColor3 = Color3.fromRGB(9,9,12)
+Frame.BorderSizePixel = 0
+Frame.Active = true
+Frame.Draggable = true
+
+Instance.new("UICorner", Frame).CornerRadius = UDim.new(0,12)
+
+local Stroke = Instance.new("UIStroke", Frame)
+Stroke.Color = Color3.fromRGB(255,0,35)
+Stroke.Thickness = 2
+
+local function Label(text, y, size, color)
+    local L = Instance.new("TextLabel", Frame)
+    L.Size = UDim2.new(1,-24,0,30)
+    L.Position = UDim2.fromOffset(12,y)
+    L.BackgroundTransparency = 1
+    L.Text = text
+    L.TextColor3 = color
+    L.Font = Enum.Font.GothamBold
+    L.TextSize = size
+    return L
+end
+
+Label("NEURAL V3", 8, 25, Color3.fromRGB(255,35,50))
+
+Label("TAME ANIMAL | CONTROL SYSTEM", 38, 12,
+    Color3.fromRGB(170,170,170))
+
+Label("ALTITUDE: 20 | RADAR: 200", 70, 14,
+    Color3.fromRGB(255,75,75))
+
+local function Button(text, y)
+    local B = Instance.new("TextButton", Frame)
+    B.Size = UDim2.new(1,-30,0,42)
+    B.Position = UDim2.fromOffset(15,y)
+    B.BackgroundColor3 = Color3.fromRGB(28,28,33)
+    B.TextColor3 = Color3.fromRGB(255,255,255)
+    B.TextSize = 14
+    B.Font = Enum.Font.GothamBold
+    B.Text = text
+
+    Instance.new("UICorner", B).CornerRadius = UDim.new(0,7)
+
+    local S = Instance.new("UIStroke", B)
+    S.Color = Color3.fromRGB(120,0,15)
+
+    return B
+end
+
+local TP = Button("AUTO TELEPORT [OFF]", 108)
+local Sword = Button("AUTO SWORD [OFF]", 160)
+
+local Status = Label("SISTEMA EM ESPERA", 215, 12,
+    Color3.fromRGB(255,70,70))
+
+Label("[ G ] ABRIR / ESCONDER", 270, 12,
+    Color3.fromRGB(150,150,150))
+
+local function Refresh()
+    TP.Text = Config.Teleport
+        and "AUTO TELEPORT [ON]"
+        or "AUTO TELEPORT [OFF]"
+
+    Sword.Text = Config.Sword
+        and "AUTO SWORD [ON]"
+        or "AUTO SWORD [OFF]"
+
+    TP.BackgroundColor3 = Config.Teleport
+        and Color3.fromRGB(160,0,20)
+        or Color3.fromRGB(28,28,33)
+
+    Sword.BackgroundColor3 = Config.Sword
+        and Color3.fromRGB(160,0,20)
+        or Color3.fromRGB(28,28,33)
+end
+
+Connect(TP.Activated, function()
+    Config.Teleport = not Config.Teleport
+    Target = nil
+    NextSearch = 0
+    Refresh()
+end)
+
+Connect(Sword.Activated, function()
+    Config.Sword = not Config.Sword
+    Refresh()
+end)
+
+Connect(Input.InputBegan, function(key, processed)
+    if processed or Input:GetFocusedTextBox() then return end
+
+    if key.KeyCode == Enum.KeyCode.G then
+        Frame.Visible = not Frame.Visible
+    end
+end)
+
+Connect(Run.Heartbeat, function()
+    local root = Root()
+    if not root then return end
+
+    local now = os.clock()
+
+    if Config.Teleport then
+
+        if not Valid(Target) then
+            Target = nil
+
+            if now >= NextSearch then
+                NextSearch = now + 0.5
+                Target = Nearest(Config.Radius)
+            end
+        end
+
+        if Valid(Target) then
+            local part = TargetPart(Target)
+
+            root.CFrame = CFrame.new(
+                part.Position + Vector3.new(0,Config.Height,0)
+            ) * root.CFrame.Rotation
+
+            root.AssemblyLinearVelocity = Vector3.zero
+
+            Status.Text = "ALVO: " .. Target.Name
+        else
+            Status.Text = "PROCURANDO NOVO ALVO..."
+        end
+
+    else
+        Target = nil
+        Status.Text = Config.Sword
+            and "AUTO SWORD ATIVO"
+            or "SISTEMA EM ESPERA"
+    end
+
+    if Config.Sword and now >= NextAttack then
+        NextAttack = now + Config.Interval
+
+        local character = Player.Character
+        local tool = character
+            and character:FindFirstChildOfClass("Tool")
+
+        local enemy = Target or Nearest(Config.SwordRadius)
+
+        if tool and Valid(enemy) then
+            local distance = (
+                TargetPart(enemy).Position - root.Position
+            ).Magnitude
+
+            if distance <= Config.SwordRadius then
+                tool:Activate()
+            end
+        end
+    end
+end)
+
+Gui.Destroying:Connect(function()
+    for _, c in ipairs(Connections) do
+        c:Disconnect()
+    end
+end)
+
+Refresh()
