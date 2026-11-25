@@ -1,0 +1,120 @@
+    return b
+end
+local function toggle(k,text)
+    local b=line(text,function() cfg[k]=not cfg[k]; target=nil; portal=nil; if render then render() end end)
+    controls[k]={b=b,text=text}
+end
+local function setting(k,text,low,high)
+    order=order+1
+    local b=new('TextBox',scroll,{Text=text..': '..cfg[k],Size=UDim2.new(1,-6,0,36),BackgroundColor3=C.bg,TextColor3=C.blue,TextSize=13,Font=Enum.Font.GothamBold,ClearTextOnFocus=false,LayoutOrder=order}); round(b)
+    pbind(b.Focused,function() b.Text=tostring(cfg[k]) end)
+    pbind(b.FocusLost,function() local n=tonumber(b.Text); if n and n==n then cfg[k]=math.clamp(n,low,high) end; b.Text=text..': '..cfg[k] end)
+end
+local info, search
+local function openPage(n)
+    page=n; heading.Text=n
+    for _,c in ipairs(pageConnections) do c:Disconnect() end
+    table.clear(pageConnections); table.clear(controls); table.clear(groupRows)
+    for _,o in ipairs(scroll:GetChildren()) do if o:IsA('GuiObject') then o:Destroy() end end
+    order=0; info=nil; search=nil
+    for k,b in pairs(nav) do b.BackgroundColor3=k==n and C.blue or C.bg end
+    if n=='Atacar Todos' then
+        toggle('All','ATACAR TODOS / alternar alvos'); toggle('Aura','AURA / ativar arma por proximidade'); toggle('Click','AUTO CLICK'); toggle('AutoF','AUTO F COM ALVO'); toggle('FreeF','F CONTINUO'); setting('AuraRadius','Raio da aura (studs)',5,150); setting('Rotation','Trocar alvo apos (s)',2,30); setting('Interval','Intervalo (s)',.15,2)
+    elseif n=='Auto Farm' then toggle('NPC','AUTO NPC'); toggle('Alpha','AUTO ALFA'); toggle('Boss','AUTO BOSS'); toggle('Gems','GEM TRACKER'); toggle('AutoF','AUTO F'); toggle('Click','AUTO CLICK')
+    elseif n=='Dungeons' then toggle('Portal','AUTO NEXT FLOOR / NEXUS FLOOR'); toggle('Boss','AUTO BOSS'); toggle('AutoF','AUTO F'); info=line('Portal: --')
+    elseif n=='Auto Equip' then toggle('Equip','AUTO EQUIPAR ARMAS COM DANO DECLARADO'); line('EQUIPAR AGORA',equip); info=line(equipStatus); line('Animais: inventario real nao identificado')
+    elseif n=='Auto Fusion' then line('Auto Fusion / Aura Fusion: integracao pendente'); line('PROCURAR CONTROLES DE FUSAO',function() inspectFusion(); openPage('Auto Fusion') end); info=line(fusionStatus); for i=1,math.min(#candidates,12) do line(candidates[i]) end; line('Nenhum animal sera consumido automaticamente.')
+    elseif n=='Radar' then toggle('SelectedOnly','APENAS ESPECIES SELECIONADAS'); setting('Radius','Radar (studs)',50,2000); order=order+1; search=new('TextBox',scroll,{Text='',PlaceholderText='Pesquisar especie...',Size=UDim2.new(1,-6,0,34),BackgroundColor3=C.bg,TextColor3=C.ink,Font=Enum.Font.Gotham,TextSize=13,ClearTextOnFocus=false,LayoutOrder=order}); round(search); pbind(search:GetPropertyChangedSignal('Text'),function() if render then render() end end)
+    elseif n=='AFK' then info=line('Monitor de inatividade'); line('Nao impede kick AFK ou crash.')
+    else info=line('Iniciando...'); line('Ative as funcoes nas abas laterais.'); line('G: abrir ou fechar | STOP: parar tudo') end
+    if render then render() end
+end
+for i,n in ipairs({'Dashboard','Atacar Todos','Auto Farm','Dungeons','Auto Equip','Auto Fusion','Radar','AFK'}) do local b=button(sidebar,n,8,8+(i-1)*50,159,42); nav[n]=b; bind(b.Activated,function() openPage(n) end) end
+render=function()
+    for k,v in pairs(controls) do v.b.Text=v.text..(cfg[k] and '  [ON]' or '  [OFF]'); v.b.BackgroundColor3=cfg[k] and C.blue or C.bg end
+    if info then
+        if page=='Dashboard' then info.Text='ENTIDADES '..#entries..'  |  ESPECIES '..#groups..'  |  F '..fCount..'  |  CLIQUES '..clickCount
+        elseif page=='Dungeons' then info.Text=portal and 'Portal detectado' or 'Portal nao detectado / boss ativo'
+        elseif page=='Auto Equip' then info.Text=equipStatus
+        elseif page=='AFK' then info.Text='Sessao '..math.floor(os.clock()-started)..'s | Inativo '..math.floor(os.clock()-lastInput)..'s' end
+    end
+    if page~='Radar' then return end
+    local i=0; local q=search and key(search.Text) or ''
+    for _,g in ipairs(groups) do
+        if has(g.n,q) then
+            i=i+1; if i>100 then break end
+            local row=groupRows[i]
+            if not row then
+                row={}; groupRows[i]=row; order=order+1
+                row.f=new('Frame',scroll,{Size=UDim2.new(1,-6,0,36),BackgroundColor3=C.bg,LayoutOrder=order,BorderSizePixel=0}); round(row.f)
+                row.b=button(row.f,'',4,2,470,32); row.t=button(row.f,'',480,2,135,32)
+                pbind(row.b.Activated,function() if row.g then selected[row.g.k]=not selected[row.g.k]; target=nil; render() end end)
+                pbind(row.t.Activated,function() local v=row.g; if v and v.kind~='GEMA' then override[v.k]=({NPC='ALFA',ALFA='BOSS',BOSS='NPC'})[v.kind]; scan(); render() end end)
+            end
+            row.g=g; row.f.Visible=true; row.b.Text=(selected[g.k] and '[X] ' or '[ ] ')..g.n..' | x'..g.count..' | '..math.floor(g.d)..' ST'; row.t.Text=g.kind; row.t.TextColor3=g.kind=='BOSS' and C.red or C.green
+        end
+    end
+    for j=i+1,#groupRows do groupRows[j].f.Visible=false; groupRows[j].g=nil end
+end
+local function stopAll()
+    for k,v in pairs(cfg) do if type(v)=='boolean' then cfg[k]=false end end
+    target=nil; portal=nil; status.Text='STOPPED'; render()
+end
+bind(stop.Activated,stopAll)
+local function pressF()
+    if UIS:GetFocusedTextBox() then return end
+    if not virtual then inputStatus='Entrada virtual indisponivel'; return end
+    local ok=pcall(function() virtual:SendKey(true,Enum.KeyCode.F,false); virtual:SendKey(false,Enum.KeyCode.F,false) end)
+    if ok then fCount=fCount+1; inputStatus='F enviado' else inputStatus='Entrada virtual bloqueada' end
+end
+local function activate()
+    if UIS:GetFocusedTextBox() then return end
+    local t=P.Character and P.Character:FindFirstChildOfClass('Tool')
+    if t then local ok=pcall(function() t:Activate() end); if ok then clickCount=clickCount+1 end end
+end
+local anim
+local function animate()
+    if anim then anim:Cancel() end
+    local cam=workspace.CurrentCamera; local fit=cam and math.min(1,cam.ViewportSize.X/930,cam.ViewportSize.Y/600) or 1
+    if visible then main.Visible=true end
+    anim=Tween:Create(scale,TweenInfo.new(.2),{Scale=visible and fit or fit*.85}); anim:Play()
+    if not visible then task.delay(.2,function() if alive and not visible then main.Visible=false end end) end
+end
+bind(UIS.InputBegan,function(k,processed)
+    lastInput=os.clock(); if processed or UIS:GetFocusedTextBox() then return end
+    if k.KeyCode==Enum.KeyCode.G then visible=not visible; animate() end
+end)
+bind(Run.RenderStepped,function(dt) fps=fps*.95+.05/math.max(dt,.001) end)
+bind(gui.Destroying,function() alive=false; for _,c in ipairs(con) do c:Disconnect() end; for _,c in ipairs(pageConnections) do c:Disconnect() end; table.clear(cache); table.clear(portals) end)
+openPage('Dashboard'); animate()
+task.spawn(function()
+    local ns,ni,ne,nui=0,0,0,0
+    while alive do
+        local now=os.clock(); local r=root(); local active=false; local combat=false; local state='STANDBY'
+        if now>=ns then ns=now+1.5; scan(); if visible then render() end end
+        if r then
+            if cfg.Portal and portal and portal:IsDescendantOf(workspace) then
+                r.CFrame=CFrame.new(portal.Position+Vector3.new(0,3,0))*r.CFrame.Rotation; r.AssemblyLinearVelocity=Vector3.zero; active=true; state='NEXT FLOOR'
+            elseif valid(target) and priority(target)<math.huge then
+                local height=({BOSS=50,ALFA=30,NPC=20,GEMA=3})[target.kind]
+                r.CFrame=CFrame.new(target.p.Position+Vector3.new(0,height,0))*r.CFrame.Rotation; r.AssemblyLinearVelocity=Vector3.zero; active=true; combat=target.kind~='GEMA'; state=target.kind..' | '..target.n
+            end
+            local nearby=false
+            if cfg.Aura then for _,e in ipairs(entries) do if e.kind~='GEMA' and valid(e) and (e.p.Position-r.Position).Magnitude<=cfg.AuraRadius and (not cfg.SelectedOnly or selected[e.k]) then nearby=true; break end end end
+            if now>=ni then
+                ni=now+cfg.Interval
+                if cfg.FreeF or ((cfg.AutoF or cfg.All) and active) then pressF() end
+                if ((cfg.Click or cfg.All) and combat) or (cfg.Aura and nearby) then activate() end
+            end
+            if cfg.Equip and now>=ne then ne=now+1; local ok=pcall(equip); if not ok then equipStatus='Equipamento recusado ou indisponivel' end end
+        end
+        if now>=nui then
+            nui=now+.5
+            if visible then
+                perf.Text='FPS '..math.floor(fps)
+                status.Text=state..' | '..((cfg.AutoF or cfg.FreeF or cfg.All) and inputStatus or 'F OFF')
+            end
+        end
+        task.wait(.1)
+    end
+end)
