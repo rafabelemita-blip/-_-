@@ -1,0 +1,110 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Player = Players.LocalPlayer
+
+local Altura = 10
+local Distancia = 200
+local Ativo = false
+local Alvo = nil
+
+local function GetRoot()
+    local character = Player.Character
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function CriaturaMaisProxima()
+    local root = GetRoot()
+    if not root then return nil end
+
+    local nearest = nil
+    local distance = Distancia
+
+    for _, object in ipairs(workspace:GetDescendants()) do
+        if object:IsA("Model")
+        and not Players:GetPlayerFromCharacter(object) then
+
+            local humanoid = object:FindFirstChildOfClass("Humanoid")
+            local part = object:FindFirstChild("HumanoidRootPart")
+                or object.PrimaryPart
+
+            if humanoid and part and humanoid.Health > 0 then
+                local d = (root.Position - part.Position).Magnitude
+
+                if d < distance then
+                    distance = d
+                    nearest = part
+                end
+            end
+        end
+    end
+
+    return nearest
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "AnimalTeleport"
+gui.ResetOnSpawn = false
+gui.Parent = Player:WaitForChild("PlayerGui")
+
+local button = Instance.new("TextButton")
+button.Size = UDim2.fromOffset(240, 50)
+button.Position = UDim2.new(0.5, -120, 0.2, 0)
+button.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+button.TextColor3 = Color3.fromRGB(255, 50, 50)
+button.Font = Enum.Font.GothamBold
+button.TextSize = 16
+button.Text = "AUTO TELEPORT [OFF]"
+button.Parent = gui
+
+Instance.new("UICorner", button)
+
+local stroke = Instance.new("UIStroke", button)
+stroke.Color = Color3.fromRGB(255, 0, 0)
+stroke.Thickness = 2
+
+button.Activated:Connect(function()
+    if not Ativo then
+        Alvo = CriaturaMaisProxima()
+
+        if not Alvo then
+            button.Text = "NENHUMA CRIATURA"
+            return
+        end
+
+        Ativo = true
+    else
+        Ativo = false
+        Alvo = nil
+    end
+
+    button.Text = Ativo
+        and "AUTO TELEPORT [ON]"
+        or "AUTO TELEPORT [OFF]"
+
+    button.BackgroundColor3 = Ativo
+        and Color3.fromRGB(150, 0, 0)
+        or Color3.fromRGB(15, 15, 15)
+end)
+
+local connection = RunService.Heartbeat:Connect(function()
+    if not Ativo then return end
+
+    local root = GetRoot()
+
+    if root and Alvo and Alvo:IsDescendantOf(workspace) then
+        root.CFrame = CFrame.new(
+            Alvo.Position + Vector3.new(0, Altura, 0)
+        )
+
+        root.AssemblyLinearVelocity = Vector3.zero
+    else
+        Ativo = false
+        Alvo = nil
+        button.Text = "AUTO TELEPORT [OFF]"
+        button.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    end
+end)
+
+gui.Destroying:Connect(function()
+    connection:Disconnect()
+end)
