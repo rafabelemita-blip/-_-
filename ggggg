@@ -1,0 +1,984 @@
+-- NEURAL V6 | INTELLIGENCE SYSTEM
+
+local Players = game:GetService("Players")
+local Run = game:GetService("RunService")
+local Input = game:GetService("UserInputService")
+local Tween = game:GetService("TweenService")
+local Tags = game:GetService("CollectionService")
+
+local Player = Players.LocalPlayer
+local PG = Player:WaitForChild("PlayerGui")
+
+local Config = {
+    Radius = 300,
+    NPC = false,
+    Boss = false,
+    Gems = false,
+    Sword = false,
+    SelectedOnly = false,
+    ScanInterval = 1,
+    AttackInterval = 0.35,
+    NPCH = 20,
+    AlphaH = 30,
+    BossH = 50
+}
+
+local C = {
+    BG = Color3.fromRGB(24,26,30),
+    Card = Color3.fromRGB(32,37,42),
+    Purple = Color3.fromRGB(125,130,245),
+    Red = Color3.fromRGB(255,110,125),
+    Green = Color3.fromRGB(55,230,170),
+    Orange = Color3.fromRGB(255,185,100),
+    White = Color3.fromRGB(240,242,255),
+    Gray = Color3.fromRGB(145,160,180)
+}
+
+for _,name in ipairs({
+    "NeuralV3","NeuralV4",
+    "NeuralV5","NeuralV6"
+}) do
+    local old = PG:FindFirstChild(name)
+    if old then old:Destroy() end
+end
+
+local Connections = {}
+local Cache = {}
+local Groups = {}
+local Selected = {}
+local Overrides = {}
+local Rows = {}
+
+local Running = true
+local Visible = true
+local Page = "Dashboard"
+local Target = nil
+local FPS = 60
+local Total = 0
+local BossTotal = 0
+local Started = os.clock()
+local LastInput = os.clock()
+
+local function Connect(signal,fn)
+    local c = signal:Connect(fn)
+    table.insert(Connections,c)
+    return c
+end
+
+local function New(class,parent,props)
+    local obj = Instance.new(class)
+    for k,v in pairs(props or {}) do
+        obj[k] = v
+    end
+    obj.Parent = parent
+    return obj
+end
+
+local function Round(obj,r)
+    New("UICorner",obj,{
+        CornerRadius = UDim.new(0,r or 10)
+    })
+end
+
+local function Text(parent,value,x,y,w,h,size,color)
+    return New("TextLabel",parent,{
+        Text = value,
+        Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h),
+        BackgroundTransparency = 1,
+        TextColor3 = color or C.White,
+        TextSize = size or 13,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd
+    })
+end
+
+local function Panel(parent,x,y,w,h,color)
+    local f = New("Frame",parent,{
+        Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h),
+        BackgroundColor3 = color or C.Card,
+        BorderSizePixel = 0
+    })
+    Round(f,12)
+    return f
+end
+
+local function Button(parent,label,x,y,w,h)
+    local b = New("TextButton",parent,{
+        Text = label,
+        Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h),
+        BackgroundColor3 = C.BG,
+        TextColor3 = C.White,
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        AutoButtonColor = false
+    })
+    Round(b,8)
+    return b
+end
+
+local function Root()
+    return Player.Character
+        and Player.Character:FindFirstChild(
+            "HumanoidRootPart"
+        )
+end
+
+local function Part(obj)
+    if obj:IsA("BasePart") then
+        return obj
+    end
+
+    if obj:IsA("Model") then
+        return obj:FindFirstChild("HumanoidRootPart")
+            or obj.PrimaryPart
+            or obj:FindFirstChildWhichIsA("BasePart")
+    end
+end
+
+local function Has(text,word)
+    return string.find(
+        tostring(text):lower(),word,1,true
+    ) ~= nil
+end
+
+local function Key(name)
+    return name:lower():gsub("^%s+","")
+        :gsub("%s+$",""):gsub("%s+"," ")
+end
+
+local function NameOf(obj)
+    local name = obj:GetAttribute("DisplayName")
+        or obj:GetAttribute("MobName")
+        or obj.Name
+
+    return tostring(name)
+end
+
+local function Classify(obj)
+    if not obj:IsDescendantOf(workspace) then
+        return nil
+    end
+
+    local name = NameOf(obj)
+
+    if obj:IsA("Model") then
+        if Players:GetPlayerFromCharacter(obj) then
+            return nil
+        end
+
+        local h = obj:FindFirstChildOfClass("Humanoid")
+
+        if h and h.Health <= 0 then
+            return nil
+        end
+
+        local category = tostring(
+            obj:GetAttribute("Type")
+            or obj:GetAttribute("Category")
+            or obj:GetAttribute("Rank")
+            or ""
+        )
+
+        local boss =
+            obj:GetAttribute("IsBoss") == true
+            or obj:GetAttribute("Boss") == true
+            or Tags:HasTag(obj,"Boss")
+            or Tags:HasTag(obj,"WorldBoss")
+            or Has(name,"boss")
+            or Has(category,"boss")
+
+        local alpha =
+            Tags:HasTag(obj,"Alpha")
+            or Has(name,"alpha")
+            or Has(name,"alfa")
+            or Has(category,"alpha")
+
+        local creature =
+            h
+            or boss
+            or alpha
+            or Tags:HasTag(obj,"Animal")
+            or Tags:HasTag(obj,"NPC")
+            or Tags:HasTag(obj,"Mob")
+
+        if creature then
+            local override = Overrides[Key(name)]
+            if override then return override end
+
+            if boss then return "BOSS" end
+            if alpha then return "ALFA" end
+            return "NPC"
+        end
+    end
+
+    if Tags:HasTag(obj,"Gem")
+        or Has(name,"gem")
+        or Has(name,"crystal") then
+        return "GEMA"
+    end
+end
+
+-- CACHE DE ENTIDADES
+
+local function Index(obj)
+    if obj:IsA("Model") then
+        Cache[obj] = true
+
+    elseif obj:IsA("BasePart") then
+        if Tags:HasTag(obj,"Gem")
+            or Has(obj.Name,"gem")
+            or Has(obj.Name,"crystal") then
+
+            Cache[obj] = true
+        end
+    end
+end
+
+Connect(workspace.DescendantAdded,Index)
+
+Connect(workspace.DescendantRemoving,function(obj)
+    Cache[obj] = nil
+end)
+
+task.spawn(function()
+    local objects = workspace:GetDescendants()
+
+    for i,obj in ipairs(objects) do
+        if not Running then return end
+
+        if obj:IsDescendantOf(workspace) then
+            Index(obj)
+        end
+
+        if i % 200 == 0 then
+            task.wait()
+        end
+    end
+end)
+
+-- INTERFACE
+
+local Gui = New("ScreenGui",PG,{
+    Name = "NeuralV6",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true
+})
+
+local Main = New("Frame",Gui,{
+    Size = UDim2.fromOffset(980,580),
+    Position = UDim2.fromScale(0.5,0.5),
+    AnchorPoint = Vector2.new(0.5,0.5),
+    BackgroundColor3 = C.BG,
+    BorderSizePixel = 0,
+    Active = true,
+    Draggable = true
+})
+
+Round(Main,18)
+
+New("UIStroke",Main,{
+    Color = Color3.fromRGB(65,70,90),
+    Thickness = 1
+})
+
+local Scale = New("UIScale",Main,{
+    Scale = 0.75
+})
+
+Text(Main,"NEURAL V6",18,12,155,35,22,C.Purple)
+Text(Main,"INTELLIGENCE",18,45,155,20,11,C.Gray)
+
+local Header = Text(
+    Main,"Dashboard",185,12,550,40,26
+)
+
+local Profile = Text(
+    Main,Player.DisplayName,790,15,175,30,13
+)
+Profile.TextXAlignment = Enum.TextXAlignment.Right
+
+local Sidebar = Panel(Main,10,80,160,485,C.BG)
+local Navigation = {}
+
+local Pages = {
+    "Dashboard","Radar","Bosses",
+    "Animais","Gemas","AFK","Ajustes"
+}
+
+local Render
+local UpdatePage
+
+for i,name in ipairs(Pages) do
+    local b = Button(
+        Sidebar,name,5,(i-1)*47,150,40
+    )
+
+    Navigation[name] = b
+
+    Connect(b.Activated,function()
+        Page = name
+        if UpdatePage then UpdatePage() end
+        if Render then Render() end
+    end)
+end
+
+Text(Sidebar,"G  |  MENU",16,440,130,30,12,C.Gray)
+
+local function Stat(x,title,color)
+    local p = Panel(Main,x,65,185,95)
+
+    Text(p,title,14,8,160,25,13,C.Gray)
+
+    return Text(
+        p,"0",14,33,160,48,30,color
+    )
+end
+
+local EntityCount = Stat(185,"Entidades",C.Purple)
+local SpeciesCount = Stat(380,"Especies",C.Green)
+local Performance = Stat(575,"FPS",C.Red)
+
+local Radar = Panel(Main,185,175,575,390)
+
+local SectionTitle = Text(
+    Radar,"Entity Intelligence",14,4,540,35,18
+)
+
+local Search = New("TextBox",Radar,{
+    Position = UDim2.fromOffset(12,43),
+    Size = UDim2.fromOffset(550,32),
+    BackgroundColor3 = C.BG,
+    Text = "",
+    PlaceholderText = "Pesquisar especie...",
+    TextColor3 = C.White,
+    PlaceholderColor3 = C.Gray,
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    ClearTextOnFocus = false
+})
+Round(Search,8)
+
+Text(Radar,"ESPECIE",15,80,240,23,11,C.Gray)
+Text(Radar,"QTD",290,80,50,23,11,C.Gray)
+Text(Radar,"DISTANCIA",350,80,90,23,11,C.Gray)
+Text(Radar,"TIPO",450,80,100,23,11,C.Gray)
+
+local List = New("ScrollingFrame",Radar,{
+    Position = UDim2.fromOffset(10,108),
+    Size = UDim2.fromOffset(555,270),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    ScrollBarImageColor3 = C.Purple,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    CanvasSize = UDim2.new()
+})
+
+New("UIListLayout",List,{
+    Padding = UDim.new(0,5),
+    SortOrder = Enum.SortOrder.LayoutOrder
+})
+
+local Control = Panel(Main,775,65,190,500)
+
+Text(Control,"Control Center",12,5,170,32,15)
+
+local Refreshers = {}
+
+local function Toggle(label,key,y,color)
+    local b = Button(Control,label,10,y,170,34)
+
+    local function Refresh()
+        b.Text = label .. (
+            Config[key] and " [ON]" or " [OFF]"
+        )
+
+        b.BackgroundColor3 = Config[key]
+            and color or C.BG
+    end
+
+    Refreshers[key] = Refresh
+
+    Connect(b.Activated,function()
+        Config[key] = not Config[key]
+        Target = nil
+        Refresh()
+    end)
+
+    Refresh()
+end
+
+Toggle("Auto NPC","NPC",43,C.Purple)
+Toggle("Auto Boss","Boss",83,C.Red)
+Toggle("Gem Tracker","Gems",123,C.Green)
+Toggle("Auto Sword","Sword",163,C.Purple)
+Toggle("So selecionados","SelectedOnly",203,C.Orange)
+
+local Radius = New("TextBox",Control,{
+    Position = UDim2.fromOffset(10,246),
+    Size = UDim2.fromOffset(170,33),
+    BackgroundColor3 = C.BG,
+    TextColor3 = C.Purple,
+    Text = tostring(Config.Radius),
+    TextSize = 15,
+    Font = Enum.Font.GothamBold,
+    ClearTextOnFocus = false
+})
+Round(Radius,8)
+
+Connect(Radius.FocusLost,function()
+    Config.Radius = math.clamp(
+        tonumber(Radius.Text) or 300,
+        50,2000
+    )
+    Radius.Text = tostring(Config.Radius)
+end)
+
+local SelectAll = Button(
+    Control,"Selecionar todos",10,287,170,32
+)
+
+local Clear = Button(
+    Control,"Limpar selecao",10,325,170,32
+)
+
+local Stop = Button(
+    Control,"STOP ALL",10,363,170,35
+)
+Stop.BackgroundColor3 = C.Red
+
+local Status = Text(
+    Control,"Standby",10,405,170,30,11,C.Green
+)
+
+local Session = Text(
+    Control,"Sessao: 0s",10,439,170,22,11,C.Gray
+)
+
+local Idle = Text(
+    Control,"AFK: 0s",10,465,170,22,11,C.Gray
+)
+
+-- PAGINAS ESPECIFICAS
+
+local Info = Panel(Main,185,175,575,390)
+Info.Visible = false
+
+local InfoTitle = Text(
+    Info,"",18,12,530,40,20,C.Purple
+)
+
+local InfoBody = Text(
+    Info,"",18,65,530,260,15,C.White
+)
+
+InfoBody.TextWrapped = true
+InfoBody.TextTruncate = Enum.TextTruncate.None
+InfoBody.TextYAlignment = Enum.TextYAlignment.Top
+
+UpdatePage = function()
+    Header.Text = Page
+
+    for name,b in pairs(Navigation) do
+        b.BackgroundColor3 = name == Page
+            and Color3.fromRGB(45,48,73)
+            or C.BG
+
+        b.TextColor3 = name == Page
+            and C.Purple or C.Gray
+    end
+
+    local special = Page == "AFK"
+        or Page == "Ajustes"
+
+    Radar.Visible = not special
+    Info.Visible = special
+
+    SectionTitle.Text = Page == "Dashboard"
+        and "Entity Intelligence"
+        or Page
+
+    if Page == "AFK" then
+        InfoTitle.Text = "Session Monitor"
+        InfoBody.Text =
+            "Monitor de inatividade e desempenho."
+
+    elseif Page == "Ajustes" then
+        InfoTitle.Text = "System Configuration"
+        InfoBody.Text =
+            "Radar: 50 a 2000 studs\n\n"
+            .."NPC: 20 studs\n"
+            .."Alfa: 30 studs\n"
+            .."Boss: 50 studs\n\n"
+            .."Clique no tipo de uma especie "
+            .."para alterar sua classificacao."
+    end
+end
+
+-- AGRUPAMENTO SEM DUPLICACAO
+
+local function Height(kind)
+    if kind == "BOSS" then return Config.BossH end
+    if kind == "ALFA" then return Config.AlphaH end
+    if kind == "GEMA" then return 3 end
+    return Config.NPCH
+end
+
+local function Priority(entry)
+    if Config.SelectedOnly
+        and not Selected[entry.Key] then
+        return math.huge
+    end
+
+    if entry.Kind == "BOSS" and Config.Boss then
+        return 1
+    end
+
+    if entry.Kind == "ALFA" and Config.NPC then
+        return 2
+    end
+
+    if entry.Kind == "NPC" and Config.NPC then
+        return 3
+    end
+
+    if entry.Kind == "GEMA" and Config.Gems then
+        return 4
+    end
+
+    return math.huge
+end
+
+local function Valid(entry)
+    if not entry or not entry.Object then
+        return false
+    end
+
+    if not entry.Object:IsDescendantOf(workspace) then
+        return false
+    end
+
+    local h = entry.Object:FindFirstChildOfClass("Humanoid")
+
+    return Part(entry.Object) ~= nil
+        and (not h or h.Health > 0)
+end
+
+local function Scan()
+    local root = Root()
+    if not root then return end
+
+    local grouped = {}
+    local best
+    local bestPriority = math.huge
+
+    Total = 0
+    BossTotal = 0
+
+    for obj in pairs(Cache) do
+        if not obj:IsDescendantOf(workspace) then
+            Cache[obj] = nil
+        else
+            local kind = Classify(obj)
+
+            if kind then
+                local part = Part(obj)
+
+                if part and part:IsA("BasePart") then
+                    local distance = (
+                        part.Position-root.Position
+                    ).Magnitude
+
+                    if distance <= Config.Radius then
+                        local name = NameOf(obj)
+                        local key = Key(name)
+
+                        local entry = {
+                            Object = obj,
+                            Key = key,
+                            Name = name,
+                            Kind = kind,
+                            Distance = distance
+                        }
+
+                        Total += 1
+
+                        if kind == "BOSS" then
+                            BossTotal += 1
+                        end
+
+                        local g = grouped[key]
+
+                        if not g then
+                            grouped[key] = {
+                                Key = key,
+                                Name = name,
+                                Kind = kind,
+                                Count = 1,
+                                Distance = distance
+                            }
+                        else
+                            g.Count += 1
+
+                            if distance < g.Distance then
+                                g.Distance = distance
+                                g.Kind = kind
+                            end
+                        end
+
+                        local priority = Priority(entry)
+
+                        if priority < math.huge then
+                            if not best
+                                or priority < bestPriority
+                                or (
+                                    priority == bestPriority
+                                    and distance < best.Distance
+                                ) then
+
+                                best = entry
+                                bestPriority = priority
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    Groups = {}
+
+    for _,g in pairs(grouped) do
+        table.insert(Groups,g)
+    end
+
+    table.sort(Groups,function(a,b)
+        return a.Distance < b.Distance
+    end)
+
+    Target = best
+
+    EntityCount.Text = tostring(Total)
+    SpeciesCount.Text = tostring(#Groups)
+end
+
+-- REUTILIZACAO DE LINHAS
+
+local function CreateRow(index)
+    local f = New("Frame",List,{
+        Size = UDim2.new(1,-6,0,38),
+        BackgroundColor3 = C.BG,
+        LayoutOrder = index,
+        BorderSizePixel = 0
+    })
+    Round(f,7)
+
+    local row = {
+        Frame = f,
+        Entry = nil
+    }
+
+    row.Name = Button(f,"",5,2,265,34)
+    row.Count = Text(f,"",280,0,60,38,12,C.White)
+    row.Distance = Text(f,"",340,0,90,38,12,C.Gray)
+    row.Type = Button(f,"",440,3,100,32)
+
+    Connect(row.Name.Activated,function()
+        if not row.Entry then return end
+
+        local key = row.Entry.Key
+        Selected[key] = not Selected[key]
+
+        Target = nil
+        Render()
+    end)
+
+    Connect(row.Type.Activated,function()
+        if not row.Entry then return end
+
+        local key = row.Entry.Key
+
+        if row.Entry.Kind == "GEMA" then
+            return
+        end
+
+        local cycle = {
+            NPC = "ALFA",
+            ALFA = "BOSS",
+            BOSS = "NPC"
+        }
+
+        Overrides[key] = cycle[row.Entry.Kind]
+            or "NPC"
+
+        Scan()
+        Render()
+    end)
+
+    Rows[index] = row
+    return row
+end
+
+Render = function()
+    if not Visible or not Radar.Visible then
+        return
+    end
+
+    local query = Search.Text:lower()
+    local i = 0
+
+    for _,g in ipairs(Groups) do
+        local show =
+            Page == "Dashboard"
+            or Page == "Radar"
+            or (Page == "Bosses" and g.Kind == "BOSS")
+            or (
+                Page == "Animais"
+                and (g.Kind == "NPC" or g.Kind == "ALFA")
+            )
+            or (Page == "Gemas" and g.Kind == "GEMA")
+
+        if show and Has(g.Name,query) then
+            i += 1
+
+            if i > 100 then break end
+
+            local row = Rows[i] or CreateRow(i)
+
+            row.Entry = g
+            row.Frame.Visible = true
+
+            row.Name.Text = (
+                Selected[g.Key] and "[X] " or "[ ] "
+            ) .. g.Name
+
+            row.Name.BackgroundColor3 =
+                Selected[g.Key] and C.Purple
+                or C.BG
+
+            row.Count.Text = tostring(g.Count)
+
+            row.Distance.Text =
+                math.floor(g.Distance).." ST"
+
+            row.Type.Text = g.Kind
+
+            row.Type.TextColor3 =
+                g.Kind == "BOSS" and C.Red
+                or g.Kind == "ALFA" and C.Orange
+                or g.Kind == "GEMA" and C.Green
+                or C.Purple
+        end
+    end
+
+    for j = i+1,#Rows do
+        Rows[j].Frame.Visible = false
+        Rows[j].Entry = nil
+    end
+end
+
+Connect(Search:GetPropertyChangedSignal("Text"),Render)
+
+Connect(SelectAll.Activated,function()
+    for _,g in ipairs(Groups) do
+        Selected[g.Key] = true
+    end
+
+    Render()
+end)
+
+Connect(Clear.Activated,function()
+    table.clear(Selected)
+    Target = nil
+    Render()
+end)
+
+Connect(Stop.Activated,function()
+    for _,key in ipairs({
+        "NPC","Boss","Gems","Sword","SelectedOnly"
+    }) do
+        Config[key] = false
+        Refreshers[key]()
+    end
+
+    Target = nil
+end)
+
+-- ANIMACAO
+
+local Animation
+local AnimationID = 0
+
+local function Fit()
+    local camera = workspace.CurrentCamera
+
+    if not camera then return 1 end
+
+    return math.min(
+        1,
+        camera.ViewportSize.X/1020,
+        camera.ViewportSize.Y/620
+    )
+end
+
+local function Animate(open)
+    AnimationID += 1
+    local id = AnimationID
+
+    if Animation then
+        Animation:Cancel()
+    end
+
+    if open then
+        Main.Visible = true
+        Render()
+    end
+
+    Animation = Tween:Create(
+        Scale,
+        TweenInfo.new(
+            0.28,
+            Enum.EasingStyle.Quart,
+            Enum.EasingDirection.Out
+        ),
+        {Scale = open and Fit() or Fit()*0.82}
+    )
+
+    Animation:Play()
+
+    if not open then
+        task.delay(0.28,function()
+            if Running and id == AnimationID then
+                Main.Visible = false
+            end
+        end)
+    end
+end
+
+Connect(Input.InputBegan,function(key,processed)
+    LastInput = os.clock()
+
+    if processed or Input:GetFocusedTextBox() then
+        return
+    end
+
+    if key.KeyCode == Enum.KeyCode.G then
+        Visible = not Visible
+        Animate(Visible)
+    end
+end)
+
+-- ATUALIZACAO LEVE
+
+local NextScan = 0
+local NextMove = 0
+local NextAttack = 0
+local NextStats = 0
+
+Connect(Run.RenderStepped,function(dt)
+    FPS = FPS*0.95
+        + (1/math.max(dt,0.001))*0.05
+end)
+
+Connect(Run.Heartbeat,function()
+    if not Running then return end
+
+    local now = os.clock()
+    local root = Root()
+
+    if not root then return end
+
+    if now >= NextScan then
+        NextScan = now + Config.ScanInterval
+        Scan()
+        Render()
+    end
+
+    if not Valid(Target) then
+        Target = nil
+    end
+
+    if Target and now >= NextMove then
+        NextMove = now + 0.05
+
+        local p = Part(Target.Object)
+        local h = Height(Target.Kind)
+
+        if Priority(Target) < math.huge then
+            root.CFrame = CFrame.new(
+                p.Position + Vector3.new(0,h,0)
+            ) * root.CFrame.Rotation
+
+            root.AssemblyLinearVelocity = Vector3.zero
+
+            Status.Text = Target.Kind.." | "..Target.Name
+
+            if Config.Sword
+                and Target.Kind ~= "GEMA"
+                and now >= NextAttack then
+
+                NextAttack = now + Config.AttackInterval
+
+                local char = Player.Character
+                local tool = char
+                    and char:FindFirstChildOfClass("Tool")
+
+                if tool then
+                    tool:Activate()
+                end
+            end
+        else
+            Target = nil
+        end
+    end
+
+    if not Target then
+        Status.Text = "Procurando alvo..."
+    end
+
+    if now >= NextStats then
+        NextStats = now + 1
+
+        Performance.Text = math.floor(FPS)
+
+        local seconds = math.floor(now-Started)
+        local idle = math.floor(now-LastInput)
+
+        Session.Text = string.format(
+            "Sessao: %02d:%02d",
+            math.floor(seconds/60),
+            seconds%60
+        )
+
+        Idle.Text = "AFK: "..idle.."s"
+
+        if Page == "AFK" then
+            InfoBody.Text =
+                "FPS: "..math.floor(FPS)
+                .."\n\nSessao: "..seconds.." segundos"
+                .."\n\nInatividade: "..idle.." segundos"
+                .."\n\nBosses detectados: "..BossTotal
+                .."\n\nEntidades: "..Total
+                .."\n\nEspecies: "..#Groups
+        end
+    end
+end)
+
+Connect(Gui.Destroying,function()
+    Running = false
+
+    for _,c in ipairs(Connections) do
+        c:Disconnect()
+    end
+
+    table.clear(Cache)
+    table.clear(Rows)
+    table.clear(Groups)
+end)
+
+UpdatePage()
+Animate(true)
