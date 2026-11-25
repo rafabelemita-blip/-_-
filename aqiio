@@ -290,10 +290,8 @@ local function Valid(entry)
     return Part(entry.Object)~=nil and (not h or h.Health>0)
 end
 local function Height(kind)
-    if kind=="BOSS" then return 50 end
-    if kind=="ALFA" then return 30 end
-    if kind=="GEMA" then return 3 end
-    return 20
+    if kind == "GEMA" then return 3 end
+    return 50
 end
 local function Priority(entry)
     if Config.SelectedOnly and not Selected[entry.Key] then return math.huge end
