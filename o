@@ -1,0 +1,128 @@
+-- NEURAL V8.2 | V7 BASE | CLIENT EDITION
+-- Derived from V7 commit 46111889ec64b4140c64799af8acff36016e3a77.
+local Players = game:GetService("Players")
+local Input = game:GetService("UserInputService")
+local Run = game:GetService("RunService")
+local Tween = game:GetService("TweenService")
+local Tags = game:GetService("CollectionService")
+local Player = Players.LocalPlayer
+local PG = Player:WaitForChild("PlayerGui")
+local Config = {
+    NPC=false, Boss=false, Gems=false, Portal=false, AutoF=false,
+    All=false, Aura=false, Equip=false, AuraRadius=65, FreeF=false,
+    Click=false, SelectedOnly=false, Radius=300, Interval=0.25
+}
+local Colors = {
+    BG=Color3.fromRGB(13,16,23), Card=Color3.fromRGB(27,32,44),
+    Red=Color3.fromRGB(243,74,101), Green=Color3.fromRGB(70,217,162),
+    Blue=Color3.fromRGB(130,155,255), White=Color3.fromRGB(245,245,250),
+    Gray=Color3.fromRGB(145,155,175)
+}
+for _,name in ipairs({"NeuralV3","NeuralV4","NeuralV5","NeuralV6","NeuralV7","NeuralV8","NeuralV81","NeuralV82"}) do
+    local old=PG:FindFirstChild(name)
+    if old then old:Destroy() end
+end
+local Running,Visible=true,true
+local Connections,Cache,Groups,Selected,Overrides,Rows={},{},{},{},{},{}
+local Target,PortalTarget,Virtual,NearbyEnemy
+local FCount,FPS=0,60
+local InputStatus="NAO TESTADO"
+local ok,result=pcall(function() return Input:CreateVirtualInput() end)
+if ok then Virtual=result end
+local function Connect(signal,fn)
+    local c=signal:Connect(fn)
+    table.insert(Connections,c)
+    return c
+end
+local function New(class,parent,props)
+    local obj=Instance.new(class)
+    for k,v in pairs(props or {}) do obj[k]=v end
+    obj.Parent=parent
+    return obj
+end
+local function Round(obj,r)
+    New("UICorner",obj,{CornerRadius=UDim.new(0,r or 10)})
+end
+local function Text(parent,value,x,y,w,h,size,color)
+    return New("TextLabel",parent,{
+        Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(w,h),
+        BackgroundTransparency=1,Text=value,TextSize=size or 13,
+        TextColor3=color or Colors.White,Font=Enum.Font.GothamBold,
+        TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd
+    })
+end
+local function Button(parent,label,x,y,w,h)
+    local b=New("TextButton",parent,{
+        Text=label,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+        BackgroundColor3=Colors.Card,TextColor3=Colors.White,
+        Font=Enum.Font.GothamBold,TextSize=13,AutoButtonColor=false
+    })
+    Round(b,9)
+    return b
+end
+local function Root()
+    return Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+end
+local function Part(obj)
+    if not obj then return end
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") then
+        local p=obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart",true)
+        if p and p:IsA("BasePart") then return p end
+    end
+end
+local function Name(obj)
+    return tostring(obj:GetAttribute("DisplayName") or obj:GetAttribute("MobName") or obj.Name)
+end
+local function Key(name)
+    return name:lower():gsub("^%s+",""):gsub("%s+$",""):gsub("%s+"," ")
+end
+local function Has(text,word)
+    return string.find(tostring(text):lower(),word,1,true)~=nil
+end
+local function IsPortal(text)
+    text=tostring(text):lower():gsub("[%s_%-]","")
+    return text=="nextfloor" or text=="nexusfloor"
+end
+local function Classify(obj)
+    local name=Name(obj)
+    if obj:IsA("Model") then
+        if Players:GetPlayerFromCharacter(obj) then return end
+        local h=obj:FindFirstChildOfClass("Humanoid")
+        if h and h.Health<=0 then return end
+        local category=tostring(obj:GetAttribute("Type") or "").." "..tostring(obj:GetAttribute("Category") or "").." "..tostring(obj:GetAttribute("Rank") or "")
+        local boss=Tags:HasTag(obj,"Boss") or Tags:HasTag(obj,"WorldBoss")
+            or obj:GetAttribute("IsBoss")==true or obj:GetAttribute("Boss")==true
+            or obj:GetAttribute("IsWorldBoss")==true or Has(name,"boss") or Has(category,"boss")
+        local alpha=Has(name,"alpha") or Has(name,"alfa") or Tags:HasTag(obj,"Alpha") or Has(category,"alpha")
+        if h or boss or alpha or Tags:HasTag(obj,"Animal") or Tags:HasTag(obj,"NPC") then
+            if Overrides[Key(name)] then return Overrides[Key(name)] end
+            if boss then return "BOSS" end
+            if alpha then return "ALFA" end
+            return "NPC"
+        end
+    end
+    if Tags:HasTag(obj,"Gem") or Has(name,"gem") or Has(name,"crystal") then return "GEMA" end
+end
+-- CACHE: uma varredura inicial e eventos de entrada/saida.
+local function Index(obj)
+    if obj:IsA("Model") or obj:IsA("TextLabel") or (obj:IsA("BasePart") and
+        (IsPortal(obj.Name) or Tags:HasTag(obj,"Gem") or Has(obj.Name,"gem") or Has(obj.Name,"crystal"))) then
+        Cache[obj]=true
+    end
+end
+Connect(workspace.DescendantAdded,Index)
+Connect(workspace.DescendantRemoving,function(obj) Cache[obj]=nil end)
+task.spawn(function()
+    for i,obj in ipairs(workspace:GetDescendants()) do
+        if not Running then return end
+        if obj:IsDescendantOf(workspace) then Index(obj) end
+        if i%200==0 then task.wait() end
+    end
+end)
+-- INTERFACE V7 COM NOVAS ABAS
+local Gui=New("ScreenGui",PG,{Name="NeuralV82",ResetOnSpawn=false,IgnoreGuiInset=true})
+local Main=New("Frame",Gui,{
+    Size=UDim2.fromOffset(800,540),Position=UDim2.fromScale(0.5,0.5),
+    AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=Colors.BG,
+    Active=true,Draggable=true,BorderSizePixel=0
