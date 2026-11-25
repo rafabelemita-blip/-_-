@@ -1,244 +1,446 @@
-local Players = game:GetService("Players")
-local Run = game:GetService("RunService")
-local Input = game:GetService("UserInputService")
-local Player = Players.LocalPlayer
-local PG = Player:WaitForChild("PlayerGui")
-
-local Config = {
-    Height = 20,
-    Radius = 200,
-    SwordRadius = 60,
-    Interval = 0.25,
-    Teleport = false,
-    Sword = false
+-- TAME AN ANIMAL — ULTIMATE HUB V3 | STUDIO INSTALLER
+-- Execute in Studio Command Bar outside Play. No external downloads.
+local run=game:GetService("RunService")
+assert(run:IsStudio() and not run:IsRunning(),"Execute no Roblox Studio, fora do Play.")
+local sss=game:GetService("ServerScriptService")
+local rs=game:GetService("ReplicatedStorage")
+local starter=game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts")
+-- Reinstall only this project's own named instances.
+local folder=Instance.new("Folder"); folder.Name="UltimateHubV3"
+local function create(parent,class,name,source)
+    local o=Instance.new(class); o.Name=name; o.Source=source; o.Parent=parent; return o
+end
+local configSource=[==[
+-- Server-only configuration. Studio sessions are authorized by default.
+return {
+    StudioOnly = true,
+    AllowStudioTestPlayers = true,
+    AdminUserIds = {}, -- e.g. [123456789] = true
+    PersistentSettings = false, -- enable only in a separate published test place
+    DataStoreName = 'UltimateHubV3_TestSettings_v1',
+    Species = {'Wolf','Tiger','Bear','Dragon'},
+    Rarities = {'Common','Rare','Epic','Legendary','Mythic'},
+    Items = {'Potion','Sword','Crystal','Armor'},
+    Defaults = {farm=false,coins=false,xp=false,resources=false,quests=false,attack=false,bossFirst=true,
+        fly=false,noclip=false,invincible=false,energy=false,army=false,range=65,damage=30,interval=.5,
+        distance=180,offset=4,speed=16,jump=50,height=1,species='All',markers=true},
+    Limits = {range={5,100},damage={1,500},interval={.2,5},distance={20,250},offset={3,50},
+        speed={8,100},jump={20,150},height={.5,2}},
+    SafeSaved = {'range','damage','interval','distance','offset','speed','jump','height','species','bossFirst','markers'}
 }
-
-local Target
-local Connections = {}
-local NextSearch = 0
-local NextAttack = 0
-
-local Old = PG:FindFirstChild("NeuralV3")
-if Old then Old:Destroy() end
-
-local function Connect(signal, fn)
-    local c = signal:Connect(fn)
-    table.insert(Connections, c)
+]==]
+local worldSource=[==[
+local W = {}
+local function part(parent,name,size,pos,color)
+    local p=Instance.new('Part'); p.Name=name; p.Size=size; p.Position=pos; p.Anchored=true
+    p.Color=color; p.Parent=parent; return p
 end
-
-local function Root()
-    return Player.Character
-        and Player.Character:FindFirstChild("HumanoidRootPart")
+local palette={NPC=Color3.fromRGB(70,155,240),BOSS=Color3.fromRGB(235,45,70),COIN=Color3.fromRGB(255,200,45),XP=Color3.fromRGB(155,90,255),RESOURCE=Color3.fromRGB(40,220,175),TREASURE=Color3.fromRGB(255,120,40)}
+function W.spawn(s,name,kind,offset,hp,rarity)
+    s.serial=s.serial+1
+    local p=part(s.entities,name,kind=='BOSS' and Vector3.new(7,7,7) or Vector3.new(3,3,3),s.origin+offset,palette[kind]); p.CanCollide=false; p.Material=Enum.Material.Neon
+    p:SetAttribute('EntityId',s.serial); p:SetAttribute('Kind',kind); p:SetAttribute('HP',hp); p:SetAttribute('MaxHP',hp); p:SetAttribute('Rarity',rarity)
+    local e={id=s.serial,part=p,name=name,kind=kind,offset=offset,hp=hp,max=hp,rarity=rarity}; s.live[e.id]=e
+    return e
 end
-
-local function TargetPart(model)
-    return model and (
-        model:FindFirstChild("HumanoidRootPart")
-        or model.PrimaryPart
-    )
-end
-
-local function Valid(model)
-    if not model or not model:IsDescendantOf(workspace) then
-        return false
+function W.create(parent,slot,owner)
+    local f=Instance.new('Folder'); f.Name='Arena_'..owner.UserId; f.Parent=parent
+    local origin=Vector3.new(slot*600,1000,0)
+    local ground=part(f,'TestGround',Vector3.new(280,2,280),origin-Vector3.new(0,1,0),Color3.fromRGB(37,40,48)); ground.Material=Enum.Material.Slate
+    local entities=Instance.new('Folder',f); entities.Name='Entities'
+    local army=Instance.new('Folder',f); army.Name='Army'
+    local s={folder=f,entities=entities,armyFolder=army,origin=origin,live={},serial=0,respawn={},armyParts={}}
+    for i,name in ipairs({'Wolf','Tiger','Bear'}) do
+        for j=1,4 do W.spawn(s,name,'NPC',Vector3.new(i*22-45,3,j*19-40),70+i*30,({'Common','Rare','Epic'})[i]) end
     end
-
-    local h = model:FindFirstChildOfClass("Humanoid")
-    local p = TargetPart(model)
-
-    return h and h.Health > 0
-        and p and p:IsA("BasePart")
-        and not Players:GetPlayerFromCharacter(model)
+    W.spawn(s,'Dragon Boss','BOSS',Vector3.new(0,5,85),1000,'Legendary')
+    for i,kind in ipairs({'COIN','XP','RESOURCE','TREASURE'}) do
+        for j=1,4 do W.spawn(s,kind,kind,Vector3.new(-90+i*35,3,-85+j*10),1,kind=='TREASURE' and 'Rare' or 'Common') end
+    end
+    return s
 end
-
-local function Nearest(radius)
-    local root = Root()
-    if not root then return nil end
-
-    local best
-    local distance = radius
-
-    for _, model in ipairs(workspace:GetDescendants()) do
-        if model:IsA("Model") and Valid(model) then
-            local d = (TargetPart(model).Position - root.Position).Magnitude
-
-            if d < distance then
-                distance = d
-                best = model
-            end
+function W.remove(s,e,now)
+    if not s.live[e.id] then return end
+    s.live[e.id]=nil; e.part:Destroy()
+    table.insert(s.respawn,{due=now+(e.kind=='BOSS' and 12 or 5),name=e.name,kind=e.kind,offset=e.offset,hp=e.max,rarity=e.rarity})
+end
+function W.tick(s,now)
+    for i=#s.respawn,1,-1 do
+        local e=s.respawn[i]
+        if now>=e.due then W.spawn(s,e.name,e.kind,e.offset,e.hp,e.rarity); table.remove(s.respawn,i) end
+    end
+end
+function W.nearest(s,pos,radius,accept,priority)
+    local best,bestDist,bestRank=nil,radius,math.huge
+    for _,e in pairs(s.live) do
+        if accept(e) then
+            local d=(e.part.Position-pos).Magnitude; local rank=priority and priority(e) or 0
+            if d<=radius and (not best or rank<bestRank or (rank==bestRank and d<bestDist)) then best,bestDist,bestRank=e,d,rank end
         end
     end
-
-    return best
+    return best,bestDist
 end
-
-local Gui = Instance.new("ScreenGui")
-Gui.Name = "NeuralV3"
-Gui.ResetOnSpawn = false
-Gui.Parent = PG
-
-local Frame = Instance.new("Frame", Gui)
-Frame.Size = UDim2.fromOffset(380, 310)
-Frame.Position = UDim2.new(0.5, -190, 0.5, -155)
-Frame.BackgroundColor3 = Color3.fromRGB(9,9,12)
-Frame.BorderSizePixel = 0
-Frame.Active = true
-Frame.Draggable = true
-
-Instance.new("UICorner", Frame).CornerRadius = UDim.new(0,12)
-
-local Stroke = Instance.new("UIStroke", Frame)
-Stroke.Color = Color3.fromRGB(255,0,35)
-Stroke.Thickness = 2
-
-local function Label(text, y, size, color)
-    local L = Instance.new("TextLabel", Frame)
-    L.Size = UDim2.new(1,-24,0,30)
-    L.Position = UDim2.fromOffset(12,y)
-    L.BackgroundTransparency = 1
-    L.Text = text
-    L.TextColor3 = color
-    L.Font = Enum.Font.GothamBold
-    L.TextSize = size
-    return L
-end
-
-Label("NEURAL V3", 8, 25, Color3.fromRGB(255,35,50))
-
-Label("TAME ANIMAL | CONTROL SYSTEM", 38, 12,
-    Color3.fromRGB(170,170,170))
-
-Label("ALTITUDE: 20 | RADAR: 200", 70, 14,
-    Color3.fromRGB(255,75,75))
-
-local function Button(text, y)
-    local B = Instance.new("TextButton", Frame)
-    B.Size = UDim2.new(1,-30,0,42)
-    B.Position = UDim2.fromOffset(15,y)
-    B.BackgroundColor3 = Color3.fromRGB(28,28,33)
-    B.TextColor3 = Color3.fromRGB(255,255,255)
-    B.TextSize = 14
-    B.Font = Enum.Font.GothamBold
-    B.Text = text
-
-    Instance.new("UICorner", B).CornerRadius = UDim.new(0,7)
-
-    local S = Instance.new("UIStroke", B)
-    S.Color = Color3.fromRGB(120,0,15)
-
-    return B
-end
-
-local TP = Button("AUTO TELEPORT [OFF]", 108)
-local Sword = Button("AUTO SWORD [OFF]", 160)
-
-local Status = Label("SISTEMA EM ESPERA", 215, 12,
-    Color3.fromRGB(255,70,70))
-
-Label("[ G ] ABRIR / ESCONDER", 270, 12,
-    Color3.fromRGB(150,150,150))
-
-local function Refresh()
-    TP.Text = Config.Teleport
-        and "AUTO TELEPORT [ON]"
-        or "AUTO TELEPORT [OFF]"
-
-    Sword.Text = Config.Sword
-        and "AUTO SWORD [ON]"
-        or "AUTO SWORD [OFF]"
-
-    TP.BackgroundColor3 = Config.Teleport
-        and Color3.fromRGB(160,0,20)
-        or Color3.fromRGB(28,28,33)
-
-    Sword.BackgroundColor3 = Config.Sword
-        and Color3.fromRGB(160,0,20)
-        or Color3.fromRGB(28,28,33)
-end
-
-Connect(TP.Activated, function()
-    Config.Teleport = not Config.Teleport
-    Target = nil
-    NextSearch = 0
-    Refresh()
-end)
-
-Connect(Sword.Activated, function()
-    Config.Sword = not Config.Sword
-    Refresh()
-end)
-
-Connect(Input.InputBegan, function(key, processed)
-    if processed or Input:GetFocusedTextBox() then return end
-
-    if key.KeyCode == Enum.KeyCode.G then
-        Frame.Visible = not Frame.Visible
+function W.army(s,pets,root,enabled)
+    local n=enabled and math.min(#pets,12) or 0
+    for i=#s.armyParts,n+1,-1 do s.armyParts[i]:Destroy(); table.remove(s.armyParts,i) end
+    for i=1,n do
+        local p=s.armyParts[i]
+        if not p then p=part(s.armyFolder,'Pet',Vector3.new(2,2,2),root.Position,Color3.fromRGB(255,60,90)); p.CanCollide=false; p.Material=Enum.Material.Neon; s.armyParts[i]=p end
+        p.Name=pets[i].name; p.Position=root.Position+Vector3.new((i-1)%4*4-6,-1,7+math.floor((i-1)/4)*4)
     end
+end
+return W
+]==]
+local serverSource=[==[
+local Players=game:GetService('Players')
+local Run=game:GetService('RunService')
+local RS=game:GetService('ReplicatedStorage')
+local DS=game:GetService('DataStoreService')
+local C=require(script.Parent.Config)
+local W=require(script.Parent.World)
+if C.StudioOnly and not Run:IsStudio() then return end
+local remote=RS:WaitForChild('UltimateHubV3Remote')
+local world=Instance.new('Folder'); world.Name='UltimateHubV3Runtime'; world.Parent=workspace
+local states={}; local slot=0; local store
+if C.PersistentSettings then store=DS:GetDataStore(C.DataStoreName) end
+local function auth(p) return (Run:IsStudio() and C.AllowStudioTestPlayers) or C.AdminUserIds[p.UserId]==true end
+local function finite(v) return type(v)=='number' and v==v and math.abs(v)<math.huge end
+local function clamp(v,a,b) if not finite(v) then error('Numero invalido') end; return math.clamp(v,a,b) end
+local function member(t,v) return table.find(t,v)~=nil end
+local function log(s,msg) table.insert(s.logs,1,os.date('%H:%M:%S')..' | '..msg); if #s.logs>40 then table.remove(s.logs) end end
+local function notify(p,s,msg) log(s,msg); remote:FireClient(p,'notice',msg) end
+local function char(p) local c=p.Character; return c,c and c:FindFirstChildOfClass('Humanoid'),c and c:FindFirstChild('HumanoidRootPart') end
+local function settings(s) local t={}; for _,k in ipairs(C.SafeSaved) do t[k]=s.cfg[k] end; return t end
+local function set(s,k,v)
+    if C.Limits[k] then local l=C.Limits[k]; s.cfg[k]=clamp(v,l[1],l[2])
+    elseif k=='species' then if v~='All' and not member(C.Species,v) then error('Especie invalida') end; s.cfg[k]=v
+    elseif type(C.Defaults[k])=='boolean' and type(v)=='boolean' then s.cfg[k]=v
+    else error('Configuracao invalida') end
+end
+local function restore(p,s)
+    local c,h,r=char(p); local o=s.original
+    if c and o and o.character==c then
+        if h then h.WalkSpeed=o.speed; h.UseJumpPower=o.useJump; h.JumpPower=o.jump; h.JumpHeight=o.jumpHeight; h.AutoRotate=o.rotate end
+        if r then r.Anchored=o.anchor; r.AssemblyLinearVelocity=Vector3.zero end
+        for part,value in pairs(o.collision) do if part.Parent and part:IsDescendantOf(c) then part.CanCollide=value end end
+        if math.abs(c:GetScale()-o.scale)>.001 then c:ScaleTo(o.scale) end
+    end
+    if s.shield then s.shield:Destroy(); s.shield=nil end
+    if c then c:SetAttribute('UltimateHubEnergy',nil) end
+    s.flight=Vector3.zero; s.lastFlight=0
+end
+local function stop(p,s,reset)
+    restore(p,s)
+    for k,v in pairs(C.Defaults) do if type(v)=='boolean' and k~='bossFirst' and k~='markers' then s.cfg[k]=false end end
+    if reset then s.cfg=table.clone(C.Defaults) end
+    s.movementTouched=false; s.nextAttack=0; s.target=nil
+    for i=#s.arena.armyParts,1,-1 do s.arena.armyParts[i]:Destroy(); table.remove(s.arena.armyParts,i) end
+end
+local function baseline(p,s,c)
+    local h=c:WaitForChild('Humanoid',10); local r=c:WaitForChild('HumanoidRootPart',10)
+    if states[p]~=s or p.Character~=c or not h or not r then return end
+    s.original={character=c,speed=h.WalkSpeed,useJump=h.UseJumpPower,jump=h.JumpPower,jumpHeight=h.JumpHeight,rotate=h.AutoRotate,anchor=r.Anchored,scale=c:GetScale(),collision={}}
+    s.movementTouched=false; s.flight=Vector3.zero; s.lastFlight=0
+    r.CFrame=CFrame.new(s.arena.origin+Vector3.new(0,5,0))
+end
+local function setup(p)
+    if states[p] or not auth(p) then return end
+    slot=slot+1
+    local s={cfg=table.clone(C.Defaults),arena=W.create(world,slot,p),coins=0,xp=0,resources=0,energy=100,kills=0,quest=0,questProgress=0,pets={},items={},petId=0,logs={},errors=0,flight=Vector3.zero,lastFlight=0,nextAttack=0,nextFarm=0,nextSnapshot=0,rate=0,rateAt=0,saved=nil,saveAt=-100}
+    states[p]=s; log(s,'Permissao confirmada; arena criada')
+    s.connection=p.CharacterAdded:Connect(function(c) task.spawn(baseline,p,s,c) end)
+    if p.Character then task.spawn(baseline,p,s,p.Character) end
+    if store then task.spawn(function()
+        local ok,data=pcall(function() return store:GetAsync('u'..p.UserId) end)
+        if states[p]~=s then return end
+        if ok and type(data)=='table' then for _,k in ipairs(C.SafeSaved) do if data[k]~=nil then pcall(set,s,k,data[k]) end end; s.saved=settings(s); log(s,'Configuracoes carregadas')
+        elseif not ok then log(s,'DataStore indisponivel; modo sessao') end
+    end) end
+end
+local function cleanup(p) local s=states[p]; if not s then return end; restore(p,s); s.connection:Disconnect(); s.arena.folder:Destroy(); states[p]=nil end
+Players.PlayerAdded:Connect(setup); Players.PlayerRemoving:Connect(cleanup)
+for _,p in ipairs(Players:GetPlayers()) do setup(p) end
+local function addPet(s,name,rarity)
+    if #s.pets>=100 then error('Inventario cheio (100)') end
+    if not member(C.Species,name) or not member(C.Rarities,rarity) then error('Animal ou raridade invalida') end
+    s.petId=s.petId+1; local rank=table.find(C.Rarities,rarity)
+    local pet={id=s.petId,name=name,rarity=rarity,level=1,hp=100*rank,damage=10*rank,speed=16,favorite=false}; table.insert(s.pets,pet); return pet
+end
+local function getPet(s,id) for _,pet in ipairs(s.pets) do if pet.id==id then return pet end end; error('Selecione um animal') end
+local function speciesOK(s,e) return s.cfg.species=='All' or e.name==s.cfg.species or (s.cfg.species=='Dragon' and e.kind=='BOSS') end
+local function isMob(e) return e.kind=='NPC' or e.kind=='BOSS' end
+local function reward(s,e,now)
+    if isMob(e) then s.kills=s.kills+1; s.questProgress=s.questProgress+1; s.coins=math.min(1e9,s.coins+(e.kind=='BOSS' and 250 or 20)); s.xp=math.min(1e9,s.xp+(e.kind=='BOSS' and 500 or 35))
+    elseif e.kind=='COIN' then s.coins=math.min(1e9,s.coins+25)
+    elseif e.kind=='XP' then s.xp=math.min(1e9,s.xp+50)
+    elseif e.kind=='RESOURCE' then s.resources=math.min(1e9,s.resources+5)
+    else s.coins=math.min(1e9,s.coins+100); s.items['Crystal']=math.min(999,(s.items.Crystal or 0)+1) end
+    W.remove(s.arena,e,now)
+end
+local function attack(p,s,now)
+    local _,h,r=char(p); if not r or not h or h.Health<=0 or now<s.nextAttack then return end
+    local e=W.nearest(s.arena,r.Position,s.cfg.range,function(v) return isMob(v) and speciesOK(s,v) end,function(v) return s.cfg.bossFirst and v.kind=='BOSS' and 0 or 1 end)
+    if not e then return end
+    if not s.cfg.energy and s.energy<5 then return end
+    s.nextAttack=now+s.cfg.interval; s.energy=s.cfg.energy and 100 or s.energy-5
+    local bonus=0; if s.cfg.army then for i=1,math.min(#s.pets,12) do bonus=bonus+s.pets[i].damage*.1 end end
+    e.hp=math.max(0,e.hp-s.cfg.damage-bonus); e.part:SetAttribute('HP',e.hp)
+    s.target=e.name; if e.hp<=0 then reward(s,e,now) end
+end
+local function movement(p,s,dt,now)
+    local c,h,r=char(p); local o=s.original; if not c or not h or not r or not o or o.character~=c or h.Health<=0 then return end
+    local cfg=s.cfg
+    if s.movementTouched then
+        h.WalkSpeed=cfg.speed; h.UseJumpPower=true; h.JumpPower=cfg.jump
+        if math.abs(c:GetScale()-cfg.height)>.001 then c:ScaleTo(cfg.height) end
+    end
+    if cfg.noclip then
+        for _,v in ipairs(c:GetDescendants()) do if v:IsA('BasePart') then if o.collision[v]==nil then o.collision[v]=v.CanCollide end; v.CanCollide=false end end
+    elseif next(o.collision) then for v,val in pairs(o.collision) do if v.Parent then v.CanCollide=val end end; table.clear(o.collision) end
+    if cfg.invincible then
+        if not s.shield or s.shield.Parent~=c then if s.shield then s.shield:Destroy() end; s.shield=Instance.new('ForceField'); s.shield.Name='UltimateHubTestShield'; s.shield.Visible=false; s.shield.Parent=c end
+        h.Health=h.MaxHealth
+    elseif s.shield then s.shield:Destroy(); s.shield=nil end
+    if cfg.fly or cfg.noclip then
+        r.Anchored=true
+        local dir=now-s.lastFlight<.6 and s.flight or Vector3.zero
+        if not cfg.fly then dir=Vector3.new(dir.X,0,dir.Z) end
+        local pos=r.Position+dir*cfg.speed*dt; local o2=s.arena.origin; local d=pos-o2
+        pos=o2+Vector3.new(math.clamp(d.X,-135,135),math.clamp(d.Y,3,110),math.clamp(d.Z,-135,135))
+        r.CFrame=CFrame.new(pos)*r.CFrame.Rotation
+    elseif r.Anchored~=o.anchor then r.Anchored=o.anchor end
+    s.energy=cfg.energy and 100 or math.min(100,s.energy+dt*8); c:SetAttribute('UltimateHubEnergy',math.floor(s.energy))
+    if not cfg.fly and not cfg.noclip and now>=s.nextFarm then
+        s.nextFarm=now+.5
+        local e=W.nearest(s.arena,r.Position,cfg.distance,function(v)
+            return (cfg.farm and isMob(v) and speciesOK(s,v)) or (cfg.coins and (v.kind=='COIN' or v.kind=='TREASURE')) or (cfg.xp and v.kind=='XP') or (cfg.resources and v.kind=='RESOURCE')
+        end,function(v) return cfg.bossFirst and v.kind=='BOSS' and 0 or 1 end)
+        if e then
+            local pos=e.part.Position+Vector3.new(0,isMob(e) and cfg.offset or 3,0); r.CFrame=CFrame.new(pos)*r.CFrame.Rotation; r.AssemblyLinearVelocity=Vector3.zero
+            s.target=e.name
+            if not isMob(e) then reward(s,e,now) end
+        else s.target=nil end
+    end
+    if cfg.attack or cfg.farm then attack(p,s,now) end
+    if now >= (s.nextBossStrike or 0) then
+        s.nextBossStrike=now+1.5
+        local boss=W.nearest(s.arena,r.Position,35,function(e) return e.kind=='BOSS' end)
+        if boss and not cfg.invincible then h:TakeDamage(12) end
+    end
+    if cfg.quests and s.questProgress>=5 then s.questProgress=s.questProgress-5; s.quest=s.quest+1; s.coins=math.min(1e9,s.coins+100); s.xp=math.min(1e9,s.xp+150); log(s,'Missao repetida: recompensa entregue') end
+    W.army(s.arena,s.pets,r,cfg.army)
+end
+local function snapshot(p,s)
+    local _,_,r=char(p); local rows={}
+    if r then for _,e in pairs(s.arena.live) do
+        local d=(e.part.Position-r.Position).Magnitude
+        if d<=s.cfg.distance then local delta=e.part.Position-r.Position; table.insert(rows,{id=e.id,name=e.name,kind=e.kind,hp=e.hp,max=e.max,rarity=e.rarity,distance=math.floor(d+.5),x=delta.X,z=delta.Z}) end
+    end end
+    table.sort(rows,function(a,b) return a.distance<b.distance end)
+    remote:FireClient(p,'state',{cfg=s.cfg,coins=s.coins,xp=s.xp,resources=s.resources,energy=math.floor(s.energy),kills=s.kills,quest=s.quest,progress=s.questProgress,pets=s.pets,items=s.items,rows=rows,logs=s.logs,errors=s.errors,target=s.target or '-',ping=math.floor(p:GetNetworkPing()*1000+.5),saved=s.saved~=nil,persistent=store~=nil,authorized=true})
+end
+local function actions(p,s,a,k,v)
+    local cfg=s.cfg; local now=os.clock()
+    if a=='set' then if type(k)~='string' then error('Campo invalido') end; set(s,k,v); if k=='speed' or k=='jump' or k=='height' then s.movementTouched=true end
+    elseif a=='stop' or a=='restore' then stop(p,s,a=='restore'); notify(p,s,'Funcoes interrompidas e personagem restaurado')
+    elseif a=='attack' then attack(p,s,now)
+    elseif a=='flight' then
+        if (cfg.fly or cfg.noclip) and typeof(k)=='Vector3' and finite(k.X) and finite(k.Y) and finite(k.Z) then s.flight=k.Magnitude>1 and k.Unit or k; s.lastFlight=now end
+    elseif a=='teleport' then
+        local pos=({Base=Vector3.new(0,5,0),Boss=Vector3.new(0,8,75),Resources=Vector3.new(65,5,-65)})[k]; local _,_,r=char(p)
+        if not pos or not r then error('Destino invalido') end; r.CFrame=CFrame.new(s.arena.origin+pos); r.AssemblyLinearVelocity=Vector3.zero
+    elseif a=='spawnPet' then local pet=addPet(s,k,v); notify(p,s,'Animal gerado: '..pet.name)
+    elseif a=='tame' then
+        local _,_,r=char(p); if not r then error('Personagem indisponivel') end
+        local e=W.nearest(s.arena,r.Position,cfg.distance,function(x) return isMob(x) and speciesOK(s,x) end)
+        if not e then error('Nenhum animal de teste no raio') end
+        addPet(s,e.kind=='BOSS' and 'Dragon' or e.name,e.rarity); W.remove(s.arena,e,now); notify(p,s,'Domado: '..e.name)
+    elseif a=='editPet' then
+        if type(v)~='table' then error('Edicao invalida') end; local pet=getPet(s,k)
+        local rules={level={1,100},hp={1,10000},damage={1,1000},speed={1,100}}
+        local lim=type(v.field)=='string' and rules[v.field]; if not lim then error('Campo invalido') end; pet[v.field]=math.floor(clamp(v.value,lim[1],lim[2])); notify(p,s,'Animal atualizado')
+    elseif a=='evolve' then local pet=getPet(s,k); if pet.favorite then error('Animal protegido') end; if pet.level>=100 then error('Nivel maximo') end; pet.level=math.min(100,pet.level+1); pet.hp=math.min(10000,math.floor(pet.hp*1.15)); pet.damage=math.min(1000,math.floor(pet.damage*1.15)); notify(p,s,'Animal evoluido')
+    elseif a=='favorite' then local pet=getPet(s,k); pet.favorite=not pet.favorite
+    elseif a=='deletePet' then local pet=getPet(s,k); if pet.favorite then error('Animal protegido') end; table.remove(s.pets,table.find(s.pets,pet)); notify(p,s,'Animal removido')
+    elseif a=='money' or a=='experience' then local field=a=='money' and 'coins' or 'xp'; s[field]=math.floor(clamp(k,0,1e9)); notify(p,s,'Saldo ficticio atualizado')
+    elseif a=='item' or a=='buy' then
+        if not member(C.Items,k) or not member(C.Rarities,v) then error('Item ou raridade invalida') end
+        local id=k..' | '..v; if (s.items[id] or 0)>=999 then error('Limite de estoque') end
+        local cost=50*table.find(C.Rarities,v); if a=='buy' then if s.coins<cost then error('Saldo insuficiente') end; s.coins=s.coins-cost end
+        s.items[id]=(s.items[id] or 0)+1; notify(p,s,'Item recebido: '..id)
+    elseif a=='itemCount' then
+        if type(k)~='string' or type(v)~='table' or not member(C.Items,k) or not member(C.Rarities,v.rarity) then error('Item invalido') end
+        local id=k..' | '..v.rarity; local n=math.floor(clamp(v.count,0,999)); s.items[id]=n>0 and n or nil; notify(p,s,'Quantidade atualizada')
+    elseif a=='reward' then s.coins=math.min(1e9,s.coins+100); s.xp=math.min(1e9,s.xp+200); notify(p,s,'Recompensa de teste: 100 moedas / 200 XP')
+    elseif a=='clearItems' then table.clear(s.items); notify(p,s,'Inventario de itens zerado')
+    elseif a=='save' then
+        s.saved=settings(s); if store then
+            if now-s.saveAt<15 then error('Aguarde 15s entre gravacoes') end; s.saveAt=now; local data=table.clone(s.saved)
+            task.spawn(function() local ok=pcall(function() store:SetAsync('u'..p.UserId,data) end); if states[p]==s then notify(p,s,ok and 'Configuracoes persistidas' or 'Falha DataStore; salvo somente na sessao') end end)
+        else notify(p,s,'Configuracoes salvas nesta sessao') end
+    elseif a=='load' then if not s.saved then error('Nenhuma configuracao salva') end; stop(p,s,false); for _,key in ipairs(C.SafeSaved) do if s.saved[key]~=nil then set(s,key,s.saved[key]) end end; s.movementTouched=true; notify(p,s,'Configuracoes restauradas; automacoes OFF')
+    elseif a=='resetEconomy' then s.coins=0; s.xp=0; s.resources=0; s.kills=0; s.quest=0; s.questProgress=0; s.energy=100; table.clear(s.pets); table.clear(s.items); notify(p,s,'Economia e inventario de teste zerados')
+    elseif a=='hello' then snapshot(p,s)
+    else error('Operacao desconhecida') end
+end
+remote.OnServerEvent:Connect(function(p,a,k,v)
+    if not auth(p) or (C.StudioOnly and not Run:IsStudio()) then return end
+    local s=states[p]; if not s then setup(p); s=states[p] end; if not s then return end
+    local now=os.clock(); if now-s.rateAt>=1 then s.rateAt=now; s.rate=0 end
+    s.rate=s.rate+1; if s.rate>25 or type(a)~='string' or #a>24 then return end
+    local ok,err=pcall(actions,p,s,a,k,v)
+    if not ok then s.errors=s.errors+1; notify(p,s,tostring(err):sub(1,180)) end
 end)
-
-Connect(Run.Heartbeat, function()
-    local root = Root()
-    if not root then return end
-
-    local now = os.clock()
-
-    if Config.Teleport then
-
-        if not Valid(Target) then
-            Target = nil
-
-            if now >= NextSearch then
-                NextSearch = now + 0.5
-                Target = Nearest(Config.Radius)
-            end
+task.spawn(function()
+    local last=os.clock()
+    while true do
+        local now=os.clock(); local dt=math.min(.3,now-last); last=now
+        for p,s in pairs(states) do
+            local ok,err=pcall(function()
+                W.tick(s.arena,now); if now >= (s.recoverAt or 0) then movement(p,s,dt,now) end
+                if now>=s.nextSnapshot then s.nextSnapshot=now+.75; snapshot(p,s) end
+            end)
+            if not ok then s.errors=s.errors+1; pcall(stop,p,s,false); log(s,'Falha recuperada: '..tostring(err):sub(1,120)); s.nextSnapshot=now+2; s.recoverAt=now+2 end
         end
-
-        if Valid(Target) then
-            local part = TargetPart(Target)
-
-            root.CFrame = CFrame.new(
-                part.Position + Vector3.new(0,Config.Height,0)
-            ) * root.CFrame.Rotation
-
-            root.AssemblyLinearVelocity = Vector3.zero
-
-            Status.Text = "ALVO: " .. Target.Name
-        else
-            Status.Text = "PROCURANDO NOVO ALVO..."
-        end
-
-    else
-        Target = nil
-        Status.Text = Config.Sword
-            and "AUTO SWORD ATIVO"
-            or "SISTEMA EM ESPERA"
-    end
-
-    if Config.Sword and now >= NextAttack then
-        NextAttack = now + Config.Interval
-
-        local character = Player.Character
-        local tool = character
-            and character:FindFirstChildOfClass("Tool")
-
-        local enemy = Target or Nearest(Config.SwordRadius)
-
-        if tool and Valid(enemy) then
-            local distance = (
-                TargetPart(enemy).Position - root.Position
-            ).Magnitude
-
-            if distance <= Config.SwordRadius then
-                tool:Activate()
-            end
-        end
+        task.wait(.12)
     end
 end)
-
-Gui.Destroying:Connect(function()
-    for _, c in ipairs(Connections) do
-        c:Disconnect()
+]==]
+local clientSource=[==[
+local Players=game:GetService('Players'); local RS=game:GetService('ReplicatedStorage'); local Run=game:GetService('RunService'); local Input=game:GetService('UserInputService'); local Tween=game:GetService('TweenService')
+local player=Players.LocalPlayer; local remote=RS:WaitForChild('UltimateHubV3Remote',10); if not remote then return end
+local pg=player:WaitForChild('PlayerGui'); local old=pg:FindFirstChild('UltimateHubV3'); if old then old:Destroy() end
+local C={bg=Color3.fromRGB(12,13,17),card=Color3.fromRGB(23,25,32),line=Color3.fromRGB(39,42,51),red=Color3.fromRGB(220,42,65),text=Color3.fromRGB(240,242,248),muted=Color3.fromRGB(160,165,180),green=Color3.fromRGB(53,210,148)}
+local function new(class,parent,props) local o=Instance.new(class); for k,v in pairs(props or {}) do o[k]=v end; o.Parent=parent; return o end
+local function round(o,n) new('UICorner',o,{CornerRadius=UDim.new(0,n or 8)}) end
+local function text(parent,value,props) local p={Text=value,BackgroundTransparency=1,TextColor3=C.text,Font=Enum.Font.Gotham,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd}; for k,v in pairs(props or {}) do p[k]=v end; return new('TextLabel',parent,p) end
+local function button(parent,value,props,fn) local p={Text=value,BackgroundColor3=C.card,TextColor3=C.text,Font=Enum.Font.GothamBold,TextSize=13,BorderSizePixel=0,AutoButtonColor=true}; for k,v in pairs(props or {}) do p[k]=v end; local b=new('TextButton',parent,p); round(b); if fn then b.Activated:Connect(fn) end; return b end
+local function frame(parent,props) local p={BackgroundColor3=C.card,BorderSizePixel=0}; for k,v in pairs(props or {}) do p[k]=v end; local f=new('Frame',parent,p); round(f); return f end
+local data={cfg={},rows={},pets={},items={},logs={}}; local authorized=false; local page='Dashboard'; local petId; local species='Wolf'; local rarity='Common'; local item='Potion'; local fps=60; local zoom=.94; local expanded=false; local shown=true; local filter=''; local updateFunctions={}; local listRows={}; local markerGuis={}; local order=0; local up,down=false,false; local connections={}
+local function bind(sig,fn) local c=sig:Connect(fn); table.insert(connections,c); return c end
+local function send(a,k,v) if authorized or a=='hello' then remote:FireServer(a,k,v) end end
+local gui=new('ScreenGui',pg,{Name='UltimateHubV3',ResetOnSpawn=false,DisplayOrder=20,IgnoreGuiInset=false}); gui.Enabled=false
+local main=frame(gui,{Size=UDim2.fromScale(zoom,.9),Position=UDim2.fromScale(.5,.5),AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=C.bg,ClipsDescendants=true}); new('UIStroke',main,{Color=C.red,Thickness=1.4}); new('UISizeConstraint',main,{MaxSize=Vector2.new(1200,780)})
+local header=frame(main,{Size=UDim2.new(1,0,0,54),BackgroundColor3=C.card})
+text(header,'ULTIMATE HUB V3',{Position=UDim2.fromOffset(12,5),Size=UDim2.new(1,-140,0,24),Font=Enum.Font.GothamBold,TextSize=18,TextColor3=C.red})
+local perf=text(header,'FPS -- | Ping --',{Position=UDim2.fromOffset(12,29),Size=UDim2.new(1,-140,0,19),TextColor3=C.muted,TextSize=11})
+local launcher
+launcher=button(gui,'HUB V3',{Position=UDim2.fromOffset(8,70),Size=UDim2.fromOffset(85,38),BackgroundColor3=C.red,Visible=false},function() shown=true; main.Visible=true; launcher.Visible=false end)
+local function show(v) shown=v; main.Visible=v; launcher.Visible=not v end
+button(header,'-',{Position=UDim2.new(1,-117,0,10),Size=UDim2.fromOffset(33,32)},function() show(false) end)
+local function resize() main:TweenSize(UDim2.fromScale(expanded and 1 or zoom,expanded and 1 or .9),Enum.EasingDirection.Out,Enum.EasingStyle.Quad,.18,true) end
+button(header,'[ ]',{Position=UDim2.new(1,-80,0,10),Size=UDim2.fromOffset(33,32)},function() expanded=not expanded; resize() end)
+button(header,'STOP',{Position=UDim2.new(1,-43,0,10),Size=UDim2.fromOffset(39,32),BackgroundColor3=C.red,TextSize=10},function() send('stop') end)
+local nav=new('ScrollingFrame',main,{Position=UDim2.fromOffset(6,60),Size=UDim2.new(.25,-9,1,-106),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new()}); new('UIListLayout',nav,{Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder})
+local body=frame(main,{Position=UDim2.new(.25,2,0,60),Size=UDim2.new(.75,-8,1,-106),BackgroundColor3=C.card,ClipsDescendants=true})
+local heading=text(body,page,{Position=UDim2.fromOffset(9,5),Size=UDim2.new(1,-18,0,25),Font=Enum.Font.GothamBold,TextSize=17})
+local search=new('TextBox',body,{Position=UDim2.fromOffset(9,34),Size=UDim2.new(1,-18,0,30),BackgroundColor3=C.bg,TextColor3=C.text,PlaceholderText='Pesquisar controles / animais',PlaceholderColor3=C.muted,Text='',Font=Enum.Font.Gotham,TextSize=12,ClearTextOnFocus=false,BorderSizePixel=0}); round(search)
+local scroll=new('ScrollingFrame',body,{Position=UDim2.fromOffset(8,70),Size=UDim2.new(1,-16,1,-77),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=4,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new()}); new('UIListLayout',scroll,{Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder})
+local footer=text(main,'Aguardando permissao...',{Position=UDim2.new(0,12,1,-42),Size=UDim2.new(1,-24,0,36),TextSize=12,TextColor3=C.green,TextWrapped=true})
+local function notice(msg) footer.Text=msg; footer.TextTransparency=0; task.delay(5,function() if footer.Parent and footer.Text==msg then footer.Text='AMBIENTE DE TESTE | G: menu' end end) end
+local function row(label,fn) order=order+1; local b=button(scroll,label,{Size=UDim2.new(1,-6,0,40),BackgroundColor3=C.bg,LayoutOrder=order,TextWrapped=true},fn); table.insert(listRows,{obj=b,key=label:lower()}); return b end
+local function info(label,format) order=order+1; local t=text(scroll,label,{Size=UDim2.new(1,-6,0,43),LayoutOrder=order,TextWrapped=true,TextTruncate=Enum.TextTruncate.None}); table.insert(listRows,{obj=t,key=label:lower()}); if format then table.insert(updateFunctions,function() t.Text=format() end) end; return t end
+local function toggle(label,key) local b=row(label,function() send('set',key,not data.cfg[key]) end); table.insert(updateFunctions,function() local on=data.cfg[key]==true; b.Text=label..(on and '  [ON]' or '  [OFF]'); b.BackgroundColor3=on and C.red or C.bg end) end
+local function number(label,key,fn,default)
+    info(label); order=order+1; local box=new('TextBox',scroll,{LayoutOrder=order,Size=UDim2.new(1,-6,0,36),BackgroundColor3=C.bg,TextColor3=C.text,Text=tostring(default or data.cfg[key] or 0),Font=Enum.Font.GothamBold,TextSize=14,ClearTextOnFocus=false,BorderSizePixel=0}); round(box); table.insert(listRows,{obj=box,key=label:lower()}); box.FocusLost:Connect(function() local n=tonumber(box.Text); if n then if fn then fn(n) else send('set',key,n) end else notice('Numero invalido') end end); if not fn then table.insert(updateFunctions,function() if not box:IsFocused() then box.Text=tostring(data.cfg[key] or 0) end end) end
+end
+local function choose(label,values,get,set) local b=row(label,function() local i=table.find(values,get()) or 0; set(values[i%#values+1]) end); table.insert(updateFunctions,function() b.Text=label..': '..tostring(get()) end) end
+local speciesList={'Wolf','Tiger','Bear','Dragon'}; local rarityList={'Common','Rare','Epic','Legendary','Mythic'}; local itemList={'Potion','Sword','Crystal','Armor'}
+local function selectedPet() for _,p in ipairs(data.pets) do if p.id==petId then return p end end end
+local function applyFilter() local q=filter:lower(); for _,r in ipairs(listRows) do r.obj.Visible=q=='' or r.key:find(q,1,true)~=nil end end
+local dynamic={}; local function dyn(i,label,key,fn)
+    local r=dynamic[i]; if not r then local b=row(label,function() local x=dynamic[i]; if x and x.fn then x.fn() end end); r={obj=b,entry=listRows[#listRows]}; dynamic[i]=r end
+    r.obj.Text=label; r.entry.key=key:lower(); r.fn=fn; r.obj.Visible=true
+end
+local radarCanvas; local radarDetails; local radarDots={}; local radarEntries={}; local function updateRadar()
+    if not radarCanvas then return end; local radius=math.max(20,data.cfg.distance or 180)
+    for i,e in ipairs(data.rows) do local index=i; radarEntries[index]=e; local dot=radarDots[index]; if not dot then dot=button(radarCanvas,'',{Size=UDim2.fromOffset(14,14),AnchorPoint=Vector2.new(.5,.5)},function() local hit=radarEntries[index]; if hit and radarDetails then radarDetails.Text=hit.name..' | '..hit.rarity..' | '..hit.distance..' ST | HP '..math.floor(hit.hp)..'/'..hit.max end end); radarDots[index]=dot end
+        dot.Visible=true; dot.Position=UDim2.fromScale(.5+math.clamp(e.x/radius,-1,1)*.46,.5+math.clamp(e.z/radius,-1,1)*.46); dot.BackgroundColor3=e.kind=='BOSS' and C.red or e.kind=='NPC' and Color3.fromRGB(75,150,250) or C.green
+    end; for i=#data.rows+1,#radarDots do radarDots[i].Visible=false; radarEntries[i]=nil end
+end
+local navButtons={}; local openPage; local render
+openPage=function(name)
+    page=name; heading.Text=name; filter=''; search.Text=''; order=0; updateFunctions={}; listRows={}; dynamic={}; radarCanvas=nil; radarDetails=nil; radarDots={}; radarEntries={}
+    for _,o in ipairs(scroll:GetChildren()) do if o:IsA('GuiObject') then o:Destroy() end end
+    for n,b in pairs(navButtons) do b.BackgroundColor3=n==name and C.red or C.card end
+    if name=='Dashboard' then
+        info('Moedas | XP | Recursos',function() return 'MOEDAS '..(data.coins or 0)..'    XP '..(data.xp or 0)..'    RECURSOS '..(data.resources or 0) end)
+        info('Combate',function() return 'ABATES '..(data.kills or 0)..' | MISSOES '..(data.quest or 0)..' | ENERGIA '..(data.energy or 0) end)
+        info('Alvo',function() return 'ALVO: '..(data.target or '-') end); info('Ambiente isolado. Nenhum dado do jogo publico e modificado.')
+    elseif name=='Auto Farm' then
+        toggle('Farm de animais','farm'); toggle('Coletar moedas e tesouros','coins'); toggle('Coletar XP','xp'); toggle('Coletar recursos','resources'); toggle('Repetir missoes (5 abates)','quests'); toggle('Prioridade de bosses','bossFirst')
+        choose('Especie',{'All','Wolf','Tiger','Bear','Dragon'},function() return data.cfg.species or 'All' end,function(v) send('set','species',v) end); number('Distancia de busca','distance'); number('Altura acima do alvo','offset'); info('Missao',function() return 'Progresso: '..(data.progress or 0)..'/5' end)
+    elseif name=='Animais' then
+        choose('Especie',speciesList,function() return species end,function(v) species=v; render() end); choose('Raridade',rarityList,function() return rarity end,function(v) rarity=v; render() end)
+        row('Gerar animal',function() send('spawnPet',species,rarity) end); row('Domar animal proximo',function() send('tame') end); toggle('Exercito (max. 12)','army')
+        info('Selecionado',function() local p=selectedPet(); return p and ('#'..p.id..' '..p.name..' | NV '..p.level..' | HP '..p.hp..' | DMG '..p.damage..' | VEL '..p.speed) or 'Selecione um animal na lista' end)
+        for _,field in ipairs({'level','hp','damage','speed'}) do number('Editar '..field,nil,function(n) if petId then send('editPet',petId,{field=field,value=n}) else notice('Selecione um animal') end end,1) end
+        row('Evoluir selecionado',function() send('evolve',petId) end); row('Proteger / desproteger selecionado',function() send('favorite',petId) end); row('Remover selecionado',function() send('deletePet',petId) end)
+    elseif name=='Personagem' then
+        number('Velocidade','speed'); number('Superpulo','jump'); number('Escala de altura (0.5-2)','height'); toggle('Voo','fly'); toggle('Noclip','noclip'); toggle('Invencibilidade','invincible'); toggle('Energia infinita (teste)','energy')
+        for _,dest in ipairs({'Base','Boss','Resources'}) do row('Teleporte: '..dest,function() send('teleport',dest) end) end
+        row('Restaurar personagem e parar',function() send('restore') end); info('Voo: joystick/WASD; use os botoes + e - fora do painel para subir/descer.')
+    elseif name=='Combate' then
+        toggle('Ataque automatico','attack'); toggle('Prioridade de bosses','bossFirst'); number('Alcance (studs)','range'); number('Dano por golpe','damage'); number('Intervalo (segundos)','interval'); row('Atacar agora',function() send('attack') end); row('Arena do boss',function() send('teleport','Boss') end)
+    elseif name=='Economia' then
+        number('Definir moedas ficticias',nil,function(n) send('money',n) end,1000); number('Definir experiencia ficticia',nil,function(n) send('experience',n) end,1000)
+        choose('Item',itemList,function() return item end,function(v) item=v; render() end); choose('Raridade',rarityList,function() return rarity end,function(v) rarity=v; render() end)
+        row('Gerar item',function() send('item',item,rarity) end); number('Editar quantidade do item escolhido',nil,function(n) send('itemCount',item,{rarity=rarity,count=n}) end,1); row('Comprar item (50 x raridade)',function() send('buy',item,rarity) end); row('Resgatar recompensa teste',function() send('reward') end); row('Limpar inventario de itens',function() send('clearItems') end)
+    elseif name=='Radar' then
+        toggle('Marcadores no mapa','markers'); number('Raio do radar','distance'); order=order+1; radarCanvas=frame(scroll,{Size=UDim2.new(1,-6,0,155),LayoutOrder=order,BackgroundColor3=C.bg,ClipsDescendants=true}); new('UIStroke',radarCanvas,{Color=C.line}); local center=frame(radarCanvas,{Size=UDim2.fromOffset(8,8),Position=UDim2.fromScale(.5,.5),AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=C.text}); info('Branco: voce | Vermelho: boss | Azul: NPC | Verde: recursos'); radarDetails=info('Toque em um ponto para inspecionar a entidade')
+    elseif name=='Diagnostico' then
+        info('Permissao',function() return 'Autorizado: '..tostring(data.authorized)..' | Erros: '..(data.errors or 0) end); info('Desempenho',function() return 'FPS '..math.floor(fps)..' | Ping unidirecional '..(data.ping or 0)..' ms' end)
+        row('Parar todas as funcoes',function() send('stop') end); row('Restaurar estado do personagem',function() send('restore') end); row('Zerar economia e inventarios',function() send('resetEconomy') end)
+    elseif name=='Configuracoes' then
+        info('Salvamento',function() return (data.persistent and 'DataStore habilitado' or 'Salvamento nesta sessao')..' | '..(data.saved and 'Salvo' or 'Nao salvo') end)
+        row('Salvar configuracoes',function() send('save') end); row('Carregar configuracoes',function() send('load') end); row('Reduzir painel',function() expanded=false; zoom=math.max(.6,zoom-.08); resize() end); row('Aumentar painel',function() expanded=false; zoom=math.min(1,zoom+.08); resize() end)
     end
+    render()
+end
+render=function()
+    for _,fn in ipairs(updateFunctions) do fn() end
+    local count=0
+    if page=='Animais' then for _,p in ipairs(data.pets) do count=count+1; local id=p.id; dyn(count,(petId==id and '[X] ' or '')..(p.favorite and '* ' or '')..'#'..id..' '..p.name..' | '..p.rarity..' | NV '..p.level,p.name..' '..p.rarity,function() petId=id; render() end) end
+    elseif page=='Economia' then local keys={}; for k in pairs(data.items) do table.insert(keys,k) end; table.sort(keys); for _,k in ipairs(keys) do count=count+1; dyn(count,k..' x'..data.items[k],k) end
+    elseif page=='Radar' then updateRadar(); for _,e in ipairs(data.rows) do count=count+1; dyn(count,e.name..' | '..e.rarity..' | '..e.distance..' ST | HP '..math.floor(e.hp)..'/'..e.max,e.name..' '..e.kind..' '..e.rarity) end
+    elseif page=='Diagnostico' then for _,msg in ipairs(data.logs) do count=count+1; dyn(count,msg,msg) end end
+    for i=count+1,#dynamic do dynamic[i].obj.Visible=false; dynamic[i].entry.key='\0' end; applyFilter(); for i=count+1,#dynamic do dynamic[i].obj.Visible=false end
+end
+for i,name in ipairs({'Dashboard','Auto Farm','Animais','Personagem','Combate','Economia','Radar','Diagnostico','Configuracoes'}) do navButtons[name]=button(nav,name,{Size=UDim2.new(1,-3,0,42),LayoutOrder=i,TextSize=12,TextWrapped=true},function() openPage(name) end) end
+bind(search:GetPropertyChangedSignal('Text'),function() filter=search.Text; render() end)
+local function flightButton(label,y,dir)
+    local b=button(gui,label,{Position=UDim2.new(1,-49,.5,y),Size=UDim2.fromOffset(42,42),BackgroundColor3=C.red,Visible=false})
+    b.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then if dir==1 then up=true else down=true end end end)
+    b.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then if dir==1 then up=false else down=false end end end); return b
+end
+local upButton=flightButton('+',-48,1); local downButton=flightButton('-',0,-1)
+local function clearMarkers() for part,g in pairs(markerGuis) do g:Destroy(); markerGuis[part]=nil end end
+local function markers()
+    if not data.cfg.markers then clearMarkers(); return end
+    local world=workspace:FindFirstChild('UltimateHubV3Runtime'); local arena=world and world:FindFirstChild('Arena_'..player.UserId); local folder=arena and arena:FindFirstChild('Entities'); if not folder then clearMarkers(); return end
+    local alive={}; local byId={}; for _,e in ipairs(data.rows) do byId[e.id]=e end
+    for _,p in ipairs(folder:GetChildren()) do local e=byId[p:GetAttribute('EntityId')]; if p:IsA('BasePart') and e then alive[p]=true; local g=markerGuis[p]; if not g then g=new('BillboardGui',pg,{Adornee=p,Size=UDim2.fromOffset(160,50),StudsOffset=Vector3.new(0,4,0),AlwaysOnTop=true,MaxDistance=250}); text(g,'',{Name='Label',Size=UDim2.fromScale(1,1),TextWrapped=true,TextTruncate=Enum.TextTruncate.None,TextStrokeTransparency=.2,TextXAlignment=Enum.TextXAlignment.Center,Font=Enum.Font.GothamBold,TextSize=11}); markerGuis[p]=g end; g.Label.Text=e.name..' | '..e.distance..' ST\n'..e.rarity..' | HP '..math.floor(e.hp)..'/'..e.max; g.Label.TextColor3=e.kind=='BOSS' and C.red or C.text end end
+    for p,g in pairs(markerGuis) do if not alive[p] then g:Destroy(); markerGuis[p]=nil end end
+end
+bind(remote.OnClientEvent,function(kind,payload)
+    if kind=='state' then data=payload; authorized=true; gui.Enabled=true; if shown then render() end; perf.Text='FPS '..math.floor(fps)..' | Ping '..(data.ping or 0)..' ms'; upButton.Visible=data.cfg.fly==true; downButton.Visible=data.cfg.fly==true; if not data.cfg.fly then up=false; down=false end; markers()
+    elseif kind=='notice' then notice(tostring(payload)) end
 end)
-
-Refresh()
+bind(Input.InputBegan,function(i,processed) if processed or Input:GetFocusedTextBox() then return end; if i.KeyCode==Enum.KeyCode.G then show(not shown); if shown then render() end end end)
+bind(Input.WindowFocusReleased,function() up=false; down=false end)
+bind(Run.RenderStepped,function(dt) fps=fps*.95+(.05/math.max(dt,.001)) end)
+local running=true; bind(gui.Destroying,function() running=false; clearMarkers(); for _,c in ipairs(connections) do c:Disconnect() end end)
+openPage('Dashboard'); send('hello')
+task.spawn(function() while running do if authorized and (data.cfg.fly or data.cfg.noclip) then local c=player.Character; local h=c and c:FindFirstChildOfClass('Humanoid'); local d=h and h.MoveDirection or Vector3.zero; local y=((up or Input:IsKeyDown(Enum.KeyCode.Space)) and 1 or 0)-((down or Input:IsKeyDown(Enum.KeyCode.LeftControl)) and 1 or 0); send('flight',Vector3.new(d.X,y,d.Z)) end; task.wait(.12) end end)
+]==]
+create(folder,"ModuleScript","Config",configSource)
+create(folder,"ModuleScript","World",worldSource)
+create(folder,"Script","Server",serverSource)
+local client=Instance.new("LocalScript"); client.Name="UltimateHubV3Client"; client.Source=clientSource
+local remote=Instance.new("RemoteEvent"); remote.Name="UltimateHubV3Remote"
+for _,entry in ipairs({{sss,folder},{starter,client},{rs,remote}}) do
+    local old=entry[1]:FindFirstChild(entry[2].Name)
+    if old then old:Destroy() end
+    entry[2].Parent=entry[1]
+end
+print("ULTIMATE HUB V3 instalado. Pressione Play (F5).")
